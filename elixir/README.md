@@ -96,6 +96,7 @@ hooks:
   after_create: |
     git clone git@github.com:your-org/your-repo.git .
 agent:
+  engine: claude
   max_concurrent_agents: 10
   max_turns: 20
 codex:
@@ -110,10 +111,14 @@ Title: {{ issue.title }} Body: {{ issue.description }}
 Notes:
 
 - If a value is missing, defaults are used.
+- `agent.engine` supports `claude` and `codex`; default is `claude`.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`
   - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
+- Codex runtime policy validation is enforced when `agent.engine: codex`; with
+  `agent.engine: claude`, those codex policy fields are optional.
+- The effective `agent.engine` value is surfaced in startup logs and dashboard views.
 - Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
 - Supported `codex.turn_sandbox_policy.type` values: `dangerFullAccess`, `readOnly`,

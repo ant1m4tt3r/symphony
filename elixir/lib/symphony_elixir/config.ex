@@ -379,13 +379,7 @@ defmodule SymphonyElixir.Config do
          :ok <- require_linear_token(),
          :ok <- require_linear_project(),
          :ok <- require_valid_agent_engine() do
-      if agent_engine() == "codex" do
-        with :ok <- require_valid_codex_runtime_settings() do
-          require_codex_command()
-        end
-      else
-        :ok
-      end
+      require_selected_agent_runtime_settings()
     end
   end
 
@@ -410,6 +404,18 @@ defmodule SymphonyElixir.Config do
       :ok
     else
       {:error, {:unsupported_agent_engine, engine}}
+    end
+  end
+
+  defp require_selected_agent_runtime_settings do
+    case agent_engine() do
+      "codex" ->
+        with :ok <- require_valid_codex_runtime_settings() do
+          require_codex_command()
+        end
+
+      "claude" ->
+        :ok
     end
   end
 
