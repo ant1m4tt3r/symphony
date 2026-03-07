@@ -140,6 +140,10 @@ To list project slugs from your Linear workspace:
 
 ## Status policy
 
+- PR-only flow: all changes must go through pull requests targeting `main`.
+  Direct pushes to `main` are not allowed.
+- Manual-only merge by default: unless `SYMPHONY_ALLOW_AUTO_MERGE=1`, PRs stay
+  human-merged only.
 - Move to `In Review` only after a working PR exists (open, non-draft, target `main`, linked to the issue, with commits).
 - If an issue begins in `Backlog`, `Todo`, or `Ready for Dev`, Symphony may move it to `In Progress` before implementation.
 - Dispatch prioritization favors active delivery:
