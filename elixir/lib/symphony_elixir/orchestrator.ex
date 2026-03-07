@@ -613,6 +613,11 @@ defmodule SymphonyElixir.Orchestrator do
             identifier: issue.identifier,
             issue: issue,
             session_id: nil,
+            requested_runtime: nil,
+            requested_runtime_source: nil,
+            effective_runtime: nil,
+            runtime_command: nil,
+            runtime_fallback_reason: nil,
             last_codex_message: nil,
             last_codex_timestamp: nil,
             last_codex_event: nil,
@@ -927,6 +932,11 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: metadata.identifier,
           state: metadata.issue.state,
           session_id: metadata.session_id,
+          requested_runtime: Map.get(metadata, :requested_runtime),
+          requested_runtime_source: Map.get(metadata, :requested_runtime_source),
+          effective_runtime: Map.get(metadata, :effective_runtime),
+          runtime_command: Map.get(metadata, :runtime_command),
+          runtime_fallback_reason: Map.get(metadata, :runtime_fallback_reason),
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
           codex_output_tokens: metadata.codex_output_tokens,
@@ -1001,6 +1011,11 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_message: summarize_codex_update(update),
         session_id: session_id_for_update(running_entry.session_id, update),
         last_codex_event: event,
+        requested_runtime: runtime_field_for_update(running_entry, update, :requested_runtime),
+        requested_runtime_source: runtime_field_for_update(running_entry, update, :requested_runtime_source),
+        effective_runtime: runtime_field_for_update(running_entry, update, :effective_runtime),
+        runtime_command: runtime_field_for_update(running_entry, update, :runtime_command),
+        runtime_fallback_reason: runtime_field_for_update(running_entry, update, :runtime_fallback_reason),
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
@@ -1031,6 +1046,24 @@ defmodule SymphonyElixir.Orchestrator do
     do: session_id
 
   defp session_id_for_update(existing, _update), do: existing
+
+  defp runtime_field_for_update(running_entry, update, key) when is_map(running_entry) and is_map(update) do
+    existing = Map.get(running_entry, key)
+
+    cond do
+      Map.has_key?(update, key) ->
+        Map.get(update, key)
+
+      Map.has_key?(update, Atom.to_string(key)) ->
+        Map.get(update, Atom.to_string(key))
+
+      true ->
+        existing
+    end
+  end
+
+  defp runtime_field_for_update(running_entry, _update, key) when is_map(running_entry),
+    do: Map.get(running_entry, key)
 
   defp turn_count_for_update(existing_count, existing_session_id, %{
          event: :session_started,

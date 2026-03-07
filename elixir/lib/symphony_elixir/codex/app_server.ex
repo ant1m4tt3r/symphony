@@ -20,6 +20,11 @@ defmodule SymphonyElixir.Codex.AppServer do
           auto_approve_requests: boolean(),
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
+          requested_runtime: String.t(),
+          requested_runtime_source: String.t(),
+          effective_runtime: String.t(),
+          runtime_command: String.t(),
+          runtime_fallback_reason: String.t() | nil,
           thread_id: String.t(),
           workspace: Path.t()
         }
@@ -35,10 +40,12 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  @spec start_session(Path.t()) :: {:ok, session()} | {:error, term()}
-  def start_session(workspace) do
+  @spec start_session(Path.t(), map() | nil) :: {:ok, session()} | {:error, term()}
+  def start_session(workspace, runtime_selection \\ nil) do
+    runtime_selection = normalize_runtime_selection(runtime_selection)
+
     with :ok <- validate_workspace_cwd(workspace),
-         {:ok, port} <- start_port(workspace) do
+         {:ok, port} <- start_port(workspace, runtime_selection.runtime_command) do
       metadata = port_metadata(port)
       expanded_workspace = Path.expand(workspace)
 
@@ -52,6 +59,11 @@ defmodule SymphonyElixir.Codex.AppServer do
            auto_approve_requests: session_policies.approval_policy == "never",
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
+           requested_runtime: runtime_selection.requested_runtime,
+           requested_runtime_source: runtime_selection.requested_source,
+           effective_runtime: runtime_selection.effective_runtime,
+           runtime_command: runtime_selection.runtime_command,
+           runtime_fallback_reason: runtime_selection.runtime_fallback_reason,
            thread_id: thread_id,
            workspace: expanded_workspace
          }}
@@ -71,6 +83,11 @@ defmodule SymphonyElixir.Codex.AppServer do
           approval_policy: approval_policy,
           auto_approve_requests: auto_approve_requests,
           turn_sandbox_policy: turn_sandbox_policy,
+          requested_runtime: requested_runtime,
+          requested_runtime_source: requested_runtime_source,
+          effective_runtime: effective_runtime,
+          runtime_command: runtime_command,
+          runtime_fallback_reason: runtime_fallback_reason,
           thread_id: thread_id,
           workspace: workspace
         },
@@ -96,7 +113,12 @@ defmodule SymphonyElixir.Codex.AppServer do
           %{
             session_id: session_id,
             thread_id: thread_id,
-            turn_id: turn_id
+            turn_id: turn_id,
+            requested_runtime: requested_runtime,
+            requested_runtime_source: requested_runtime_source,
+            effective_runtime: effective_runtime,
+            runtime_command: runtime_command,
+            runtime_fallback_reason: runtime_fallback_reason
           },
           metadata
         )
@@ -159,7 +181,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace) do
+  defp start_port(workspace, runtime_command) do
     executable = System.find_executable("bash")
 
     if is_nil(executable) do
@@ -172,7 +194,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.codex_command())],
+            args: [~c"-lc", String.to_charlist(runtime_command)],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
@@ -218,6 +240,26 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp session_policies(workspace) do
     Config.codex_runtime_settings(workspace)
+  end
+
+  defp normalize_runtime_selection(%{} = runtime_selection) do
+    %{
+      requested_runtime: runtime_selection[:requested_runtime] || runtime_selection["requested_runtime"] || "codex",
+      requested_source: runtime_selection[:requested_source] || runtime_selection["requested_source"] || "workflow",
+      effective_runtime: runtime_selection[:effective_runtime] || runtime_selection["effective_runtime"] || "codex",
+      runtime_command: runtime_selection[:runtime_command] || runtime_selection["runtime_command"] || Config.codex_command(),
+      runtime_fallback_reason: runtime_selection[:runtime_fallback_reason] || runtime_selection["runtime_fallback_reason"]
+    }
+  end
+
+  defp normalize_runtime_selection(_runtime_selection) do
+    %{
+      requested_runtime: "codex",
+      requested_source: "legacy_default",
+      effective_runtime: "codex",
+      runtime_command: Config.codex_command(),
+      runtime_fallback_reason: nil
+    }
   end
 
   defp do_start_session(port, workspace, session_policies) do

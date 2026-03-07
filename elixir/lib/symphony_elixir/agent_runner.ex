@@ -1,9 +1,10 @@
 defmodule SymphonyElixir.AgentRunner do
   @moduledoc """
-  Executes a single Linear issue in an isolated workspace with Codex.
+  Executes a single Linear issue in an isolated workspace with the selected runtime.
   """
 
   require Logger
+  alias SymphonyElixir.AgentRuntime
   alias SymphonyElixir.Codex.AppServer
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
@@ -50,7 +51,9 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.agent_max_turns())
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace) do
+    with {:ok, runtime_selection} <- AgentRuntime.resolve(issue),
+         :ok <- emit_runtime_selection(codex_update_recipient, issue, runtime_selection),
+         {:ok, session} <- AppServer.start_session(workspace, runtime_selection) do
       try do
         do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
       after
@@ -151,4 +154,18 @@ defmodule SymphonyElixir.AgentRunner do
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
+
+  defp emit_runtime_selection(recipient, issue, selection) when is_map(selection) do
+    send_codex_update(recipient, issue, %{
+      event: :runtime_selected,
+      timestamp: DateTime.utc_now(),
+      requested_runtime: selection.requested_runtime,
+      requested_runtime_source: selection.requested_source,
+      effective_runtime: selection.effective_runtime,
+      runtime_command: selection.runtime_command,
+      runtime_fallback_reason: selection.runtime_fallback_reason
+    })
+  end
+
+  defp emit_runtime_selection(_recipient, _issue, _selection), do: :ok
 end

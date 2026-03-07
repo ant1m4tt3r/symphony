@@ -26,9 +26,11 @@ defmodule SymphonyElixir.Config do
   @default_workspace_root Path.join(System.tmp_dir!(), "symphony_workspaces")
   @default_hook_timeout_ms 60_000
   @default_max_concurrent_agents 10
+  @default_agent_runtime "claude"
   @default_agent_max_turns 20
   @default_max_retry_backoff_ms 300_000
   @default_codex_command "codex app-server"
+  @default_claude_command "claude app-server"
   @default_codex_turn_timeout_ms 3_600_000
   @default_codex_read_timeout_ms 5_000
   @default_codex_stall_timeout_ms 300_000
@@ -86,6 +88,7 @@ defmodule SymphonyElixir.Config do
                                    type: :integer,
                                    default: @default_max_concurrent_agents
                                  ],
+                                 runtime: [type: {:or, [:string, nil]}, default: nil],
                                  max_turns: [
                                    type: :pos_integer,
                                    default: @default_agent_max_turns
@@ -117,6 +120,13 @@ defmodule SymphonyElixir.Config do
                                    type: :integer,
                                    default: @default_codex_stall_timeout_ms
                                  ]
+                               ]
+                             ],
+                             claude: [
+                               type: :map,
+                               default: %{},
+                               keys: [
+                                 command: [type: :string, default: @default_claude_command]
                                ]
                              ],
                              hooks: [
@@ -254,6 +264,16 @@ defmodule SymphonyElixir.Config do
     get_in(validated_workflow_options(), [:agent, :max_concurrent_agents])
   end
 
+  @spec agent_runtime_override() :: String.t() | nil
+  def agent_runtime_override do
+    get_in(validated_workflow_options(), [:agent, :runtime])
+  end
+
+  @spec agent_runtime() :: String.t()
+  def agent_runtime do
+    agent_runtime_override() || @default_agent_runtime
+  end
+
   @spec max_retry_backoff_ms() :: pos_integer()
   def max_retry_backoff_ms do
     get_in(validated_workflow_options(), [:agent, :max_retry_backoff_ms])
@@ -277,6 +297,21 @@ defmodule SymphonyElixir.Config do
   def codex_command do
     get_in(validated_workflow_options(), [:codex, :command])
   end
+
+  @spec claude_command() :: String.t()
+  def claude_command do
+    get_in(validated_workflow_options(), [:claude, :command])
+  end
+
+  @spec command_for_runtime(String.t()) :: String.t()
+  def command_for_runtime(runtime) when is_binary(runtime) do
+    case normalize_runtime_name(runtime) do
+      "claude" -> claude_command()
+      _ -> codex_command()
+    end
+  end
+
+  def command_for_runtime(_runtime), do: codex_command()
 
   @spec codex_turn_timeout_ms() :: pos_integer()
   def codex_turn_timeout_ms do
@@ -451,6 +486,7 @@ defmodule SymphonyElixir.Config do
       workspace: extract_workspace_options(section_map(config, "workspace")),
       agent: extract_agent_options(section_map(config, "agent")),
       codex: extract_codex_options(section_map(config, "codex")),
+      claude: extract_claude_options(section_map(config, "claude")),
       hooks: extract_hooks_options(section_map(config, "hooks")),
       observability: extract_observability_options(section_map(config, "observability")),
       server: extract_server_options(section_map(config, "server"))
@@ -480,6 +516,7 @@ defmodule SymphonyElixir.Config do
   defp extract_agent_options(section) do
     %{}
     |> put_if_present(:max_concurrent_agents, integer_value(Map.get(section, "max_concurrent_agents")))
+    |> put_if_present(:runtime, runtime_value(Map.get(section, "runtime")))
     |> put_if_present(:max_turns, positive_integer_value(Map.get(section, "max_turns")))
     |> put_if_present(:max_retry_backoff_ms, positive_integer_value(Map.get(section, "max_retry_backoff_ms")))
     |> put_if_present(
@@ -494,6 +531,11 @@ defmodule SymphonyElixir.Config do
     |> put_if_present(:turn_timeout_ms, integer_value(Map.get(section, "turn_timeout_ms")))
     |> put_if_present(:read_timeout_ms, integer_value(Map.get(section, "read_timeout_ms")))
     |> put_if_present(:stall_timeout_ms, integer_value(Map.get(section, "stall_timeout_ms")))
+  end
+
+  defp extract_claude_options(section) do
+    %{}
+    |> put_if_present(:command, command_value(Map.get(section, "command")))
   end
 
   defp extract_hooks_options(section) do
@@ -558,6 +600,19 @@ defmodule SymphonyElixir.Config do
   end
 
   defp command_value(_value), do: :omit
+
+  defp runtime_value(value) do
+    case scalar_string_value(value) do
+      :omit ->
+        :omit
+
+      runtime ->
+        case normalize_runtime_name(runtime) do
+          nil -> :omit
+          normalized -> normalized
+        end
+    end
+  end
 
   defp hook_command_value(value) when is_binary(value) do
     case String.trim(value) do
@@ -779,6 +834,16 @@ defmodule SymphonyElixir.Config do
     |> String.trim()
     |> String.downcase()
   end
+
+  defp normalize_runtime_name(runtime) when is_binary(runtime) do
+    case runtime |> String.trim() |> String.downcase() do
+      "claude" -> "claude"
+      "codex" -> "codex"
+      _ -> nil
+    end
+  end
+
+  defp normalize_runtime_name(_runtime), do: nil
 
   defp normalize_tracker_kind(kind) when is_binary(kind) do
     kind

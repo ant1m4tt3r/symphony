@@ -349,6 +349,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "session_id" => "thread-http",
+                 "runtime" => %{
+                   "requested" => nil,
+                   "effective" => nil,
+                   "source" => nil,
+                   "fallback_reason" => nil
+                 },
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
@@ -386,6 +392,12 @@ defmodule SymphonyElixir.ExtensionsTest do
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
                "session_id" => "thread-http",
+               "runtime" => %{
+                 "requested" => nil,
+                 "effective" => nil,
+                 "source" => nil,
+                 "fallback_reason" => nil
+               },
                "turn_count" => 7,
                "state" => "In Progress",
                "started_at" => issue_payload["running"]["started_at"],

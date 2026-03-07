@@ -100,6 +100,7 @@ defmodule SymphonyElixirWeb.Presenter do
       issue_identifier: entry.identifier,
       state: entry.state,
       session_id: entry.session_id,
+      runtime: runtime_payload(entry),
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
       last_message: summarize_message(entry.last_codex_message),
@@ -126,6 +127,7 @@ defmodule SymphonyElixirWeb.Presenter do
   defp running_issue_payload(running) do
     %{
       session_id: running.session_id,
+      runtime: runtime_payload(running),
       turn_count: Map.get(running, :turn_count, 0),
       state: running.state,
       started_at: iso8601(running.started_at),
@@ -161,6 +163,15 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
+
+  defp runtime_payload(entry) when is_map(entry) do
+    %{
+      requested: Map.get(entry, :requested_runtime),
+      effective: Map.get(entry, :effective_runtime),
+      source: Map.get(entry, :requested_runtime_source),
+      fallback_reason: Map.get(entry, :runtime_fallback_reason)
+    }
+  end
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

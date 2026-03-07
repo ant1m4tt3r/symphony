@@ -8,6 +8,7 @@ defmodule SymphonyElixir.CoreTest do
       poll_interval_ms: nil,
       tracker_active_states: nil,
       tracker_terminal_states: nil,
+      agent_runtime: nil,
       codex_command: nil
     )
 
@@ -16,6 +17,8 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.linear_terminal_states() == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
     assert Config.linear_assignee() == nil
     assert Config.agent_max_turns() == 20
+    assert Config.agent_runtime() == "claude"
+    assert Config.claude_command() == "claude app-server"
 
     write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: "invalid")
     assert Config.poll_interval_ms() == 30_000
