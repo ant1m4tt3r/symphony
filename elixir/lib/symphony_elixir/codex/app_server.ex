@@ -956,21 +956,23 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp tool_call_arguments(_params), do: %{}
 
   defp maybe_block_risky_merge_push_command(payload) do
-    if merge_push_guardrails_enabled?() do
-      case approval_payload_command(payload) do
-        command when is_binary(command) ->
-          if risky_merge_or_push_command?(command) do
-            Logger.warning("Blocking risky merge/push command approval request: #{command}")
-            :blocked
-          else
-            :ok
-          end
+    case {merge_push_guardrails_enabled?(), approval_payload_command(payload)} do
+      {true, command} when is_binary(command) ->
+        maybe_block_risky_merge_push_command_with_guardrails(command)
 
-        _ ->
-          :ok
-      end
-    else
-      :ok
+      _ ->
+        :ok
+    end
+  end
+
+  defp maybe_block_risky_merge_push_command_with_guardrails(command) do
+    case risky_merge_or_push_command?(command) do
+      true ->
+        Logger.warning("Blocking risky merge/push command approval request: #{command}")
+        :blocked
+
+      false ->
+        :ok
     end
   end
 
