@@ -65,10 +65,10 @@ defmodule SymphonyElixir.CoreTest do
 
     assert :ok = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: 123)
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_approval_policy: 123)
     assert {:error, {:invalid_codex_approval_policy, 123}} = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: 123)
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_thread_sandbox: 123)
     assert {:error, {:invalid_codex_thread_sandbox, 123}} = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: 123)

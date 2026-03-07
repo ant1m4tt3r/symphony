@@ -28,6 +28,8 @@ defmodule SymphonyElixir.Config do
   @default_max_concurrent_agents 10
   @default_agent_max_turns 20
   @default_max_retry_backoff_ms 300_000
+  @default_agent_engine "claude"
+  @supported_agent_engines ["claude", "codex"]
   @default_codex_command "codex app-server"
   @default_codex_turn_timeout_ms 3_600_000
   @default_codex_read_timeout_ms 5_000
@@ -82,6 +84,10 @@ defmodule SymphonyElixir.Config do
                                type: :map,
                                default: %{},
                                keys: [
+                                 engine: [
+                                   type: :string,
+                                   default: @default_agent_engine
+                                 ],
                                  max_concurrent_agents: [
                                    type: :integer,
                                    default: @default_max_concurrent_agents
@@ -250,6 +256,11 @@ defmodule SymphonyElixir.Config do
     get_in(validated_workflow_options(), [:hooks, :timeout_ms])
   end
 
+  @spec agent_engine() :: String.t()
+  def agent_engine do
+    get_in(validated_workflow_options(), [:agent, :engine])
+  end
+
   @spec max_concurrent_agents() :: pos_integer()
   def max_concurrent_agents do
     get_in(validated_workflow_options(), [:agent, :max_concurrent_agents])
@@ -373,8 +384,8 @@ defmodule SymphonyElixir.Config do
          :ok <- require_tracker_kind(),
          :ok <- require_linear_token(),
          :ok <- require_linear_project(),
-         :ok <- require_valid_codex_runtime_settings() do
-      require_codex_command()
+         :ok <- require_valid_agent_engine() do
+      require_selected_agent_runtime_settings()
     end
   end
 
@@ -389,6 +400,28 @@ defmodule SymphonyElixir.Config do
          thread_sandbox: thread_sandbox,
          turn_sandbox_policy: turn_sandbox_policy
        }}
+    end
+  end
+
+  defp require_valid_agent_engine do
+    engine = agent_engine()
+
+    if engine in @supported_agent_engines do
+      :ok
+    else
+      {:error, {:unsupported_agent_engine, engine}}
+    end
+  end
+
+  defp require_selected_agent_runtime_settings do
+    case agent_engine() do
+      "codex" ->
+        with :ok <- require_valid_codex_runtime_settings() do
+          require_codex_command()
+        end
+
+      "claude" ->
+        :ok
     end
   end
 
@@ -485,6 +518,7 @@ defmodule SymphonyElixir.Config do
 
   defp extract_agent_options(section) do
     %{}
+    |> put_if_present(:engine, normalize_agent_engine(scalar_string_value(Map.get(section, "engine"))))
     |> put_if_present(:max_concurrent_agents, integer_value(Map.get(section, "max_concurrent_agents")))
     |> put_if_present(:max_turns, positive_integer_value(Map.get(section, "max_turns")))
     |> put_if_present(:max_retry_backoff_ms, positive_integer_value(Map.get(section, "max_retry_backoff_ms")))
@@ -786,6 +820,18 @@ defmodule SymphonyElixir.Config do
     |> String.trim()
     |> String.downcase()
   end
+
+  defp normalize_agent_engine(engine) when is_binary(engine) do
+    engine
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "" -> :omit
+      normalized -> normalized
+    end
+  end
+
+  defp normalize_agent_engine(_engine), do: :omit
 
   defp normalize_tracker_kind(kind) when is_binary(kind) do
     kind

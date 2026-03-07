@@ -53,6 +53,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="hero-copy">
               Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
             </p>
+            <p class="hero-engine">
+              Engine: <strong><%= @payload[:agent_engine] || "claude" %></strong>
+            </p>
           </div>
 
           <div class="status-stack">
