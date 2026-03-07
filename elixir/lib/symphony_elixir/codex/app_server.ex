@@ -244,11 +244,11 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp normalize_runtime_selection(%{} = runtime_selection) do
     %{
-      requested_runtime: runtime_selection[:requested_runtime] || runtime_selection["requested_runtime"] || "codex",
-      requested_source: runtime_selection[:requested_source] || runtime_selection["requested_source"] || "workflow",
-      effective_runtime: runtime_selection[:effective_runtime] || runtime_selection["effective_runtime"] || "codex",
-      runtime_command: runtime_selection[:runtime_command] || runtime_selection["runtime_command"] || Config.codex_command(),
-      runtime_fallback_reason: runtime_selection[:runtime_fallback_reason] || runtime_selection["runtime_fallback_reason"]
+      requested_runtime: runtime_selection_value(runtime_selection, :requested_runtime, "codex"),
+      requested_source: runtime_selection_value(runtime_selection, :requested_source, "workflow"),
+      effective_runtime: runtime_selection_value(runtime_selection, :effective_runtime, "codex"),
+      runtime_command: runtime_selection_value(runtime_selection, :runtime_command, Config.codex_command()),
+      runtime_fallback_reason: runtime_selection_value(runtime_selection, :runtime_fallback_reason, nil)
     }
   end
 
@@ -260,6 +260,14 @@ defmodule SymphonyElixir.Codex.AppServer do
       runtime_command: Config.codex_command(),
       runtime_fallback_reason: nil
     }
+  end
+
+  defp runtime_selection_value(selection, key, default) when is_map(selection) and is_atom(key) do
+    if Map.has_key?(selection, key) do
+      Map.get(selection, key)
+    else
+      Map.get(selection, Atom.to_string(key), default)
+    end
   end
 
   defp do_start_session(port, workspace, session_policies) do

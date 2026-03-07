@@ -93,4 +93,114 @@ defmodule SymphonyElixir.AgentRuntimeTest do
       File.rm_rf(test_root)
     end
   end
+
+  test "supports multiple task label override prefixes and runtime aliases" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-agent-runtime-#{System.unique_integer([:positive])}")
+    codex_bin = Path.join(test_root, "fake-codex")
+    claude_bin = Path.join(test_root, "fake-claude")
+
+    try do
+      File.mkdir_p!(test_root)
+      File.write!(codex_bin, "#!/usr/bin/env sh\nexit 0\n")
+      File.write!(claude_bin, "#!/usr/bin/env sh\nexit 0\n")
+      File.chmod!(codex_bin, 0o755)
+      File.chmod!(claude_bin, 0o755)
+
+      runtime_commands = %{
+        "claude" => "CLAUDE_MODE=1 #{claude_bin} app-server",
+        "codex" => "CODEX_MODE=1 #{codex_bin} app-server"
+      }
+
+      for {label, expected_runtime} <- [
+            {"agent=claude", "claude"},
+            {"runtime:claude-code", "claude"},
+            {"runtime=anthropic", "claude"},
+            {"engine:codex", "codex"},
+            {"engine=openai-codex", "codex"}
+          ] do
+        assert {:ok, selection} =
+                 AgentRuntime.resolve(
+                   %{labels: [label]},
+                   global_runtime: nil,
+                   runtime_commands: runtime_commands
+                 )
+
+        assert selection.requested_source == "task_label"
+        assert selection.requested_runtime == expected_runtime
+        assert selection.effective_runtime == expected_runtime
+      end
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "uses fallback command selection path when no runtime command is executable" do
+    assert {:ok, selection} =
+             AgentRuntime.resolve(
+               %Issue{labels: []},
+               global_runtime: nil,
+               runtime_commands: %{
+                 "claude" => "definitely-missing-claude app-server",
+                 "codex" => "definitely-missing-codex app-server"
+               }
+             )
+
+    assert selection.requested_runtime == "claude"
+    assert selection.effective_runtime == "claude"
+    assert selection.runtime_command == "definitely-missing-claude app-server"
+    assert selection.runtime_fallback_reason == nil
+  end
+
+  test "returns an error when selected fallback command is non-binary" do
+    assert {:error, {:missing_runtime_command, "codex"}} =
+             AgentRuntime.resolve(
+               %Issue{labels: ["agent:codex"]},
+               global_runtime: nil,
+               runtime_commands: %{"codex" => 123, "claude" => nil}
+             )
+  end
+
+  test "falls back to config commands when runtime_commands option is invalid" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-agent-runtime-#{System.unique_integer([:positive])}")
+    codex_bin = Path.join(test_root, "fake-codex")
+
+    try do
+      File.mkdir_p!(test_root)
+      File.write!(codex_bin, "#!/usr/bin/env sh\nexit 0\n")
+      File.chmod!(codex_bin, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(), codex_command: "#{codex_bin} app-server")
+
+      assert {:ok, selection} =
+               AgentRuntime.resolve(
+                 %{},
+                 global_runtime: "codex",
+                 runtime_commands: :invalid
+               )
+
+      assert selection.requested_source == "workflow"
+      assert selection.requested_runtime == "codex"
+      assert selection.effective_runtime == "codex"
+      assert selection.runtime_command == "#{codex_bin} app-server"
+      assert selection.runtime_fallback_reason == nil
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "detects available non-path executables from PATH" do
+    assert {:ok, selection} =
+             AgentRuntime.resolve(
+               %Issue{labels: ["agent:codex"]},
+               global_runtime: nil,
+               runtime_commands: %{
+                 "claude" => "definitely-missing-claude app-server",
+                 "codex" => "sh -c true"
+               }
+             )
+
+    assert selection.requested_runtime == "codex"
+    assert selection.effective_runtime == "codex"
+    assert selection.runtime_command == "sh -c true"
+  end
 end

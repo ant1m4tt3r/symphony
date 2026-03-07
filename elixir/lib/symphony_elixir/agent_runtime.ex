@@ -117,16 +117,20 @@ defmodule SymphonyElixir.AgentRuntime do
         base
 
       %{} = overrides ->
-        overrides
-        |> Enum.reduce(base, fn {runtime, command}, acc ->
-          case normalize_runtime(runtime) do
-            nil -> acc
-            normalized -> Map.put(acc, normalized, command)
-          end
-        end)
+        Enum.reduce(overrides, base, &put_runtime_override/2)
 
       _ ->
         base
+    end
+  end
+
+  defp put_runtime_override({runtime, command}, acc) do
+    normalized = normalize_runtime(runtime)
+
+    if is_binary(normalized) do
+      Map.put(acc, normalized, command)
+    else
+      acc
     end
   end
 
@@ -181,8 +185,6 @@ defmodule SymphonyElixir.AgentRuntime do
     end
   end
 
-  defp executable_available?(_), do: false
-
   defp executable_path_available?(path) do
     case File.stat(path) do
       {:ok, %File.Stat{type: :regular, mode: mode}} -> (mode &&& 0o111) != 0
@@ -193,8 +195,6 @@ defmodule SymphonyElixir.AgentRuntime do
   defp env_assignment_token?(token) when is_binary(token) do
     String.match?(token, ~r/^[A-Za-z_][A-Za-z0-9_]*=.*/)
   end
-
-  defp env_assignment_token?(_token), do: false
 
   defp normalize_runtime(runtime) when is_binary(runtime) do
     case runtime |> String.trim() |> String.downcase() do
