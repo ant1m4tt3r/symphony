@@ -843,8 +843,6 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  defp normalize_runtime_name(_runtime), do: nil
-
   defp normalize_tracker_kind(kind) when is_binary(kind) do
     kind
     |> String.trim()

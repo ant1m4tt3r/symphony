@@ -166,6 +166,4 @@ defmodule SymphonyElixir.AgentRunner do
       runtime_fallback_reason: selection.runtime_fallback_reason
     })
   end
-
-  defp emit_runtime_selection(_recipient, _issue, _selection), do: :ok
 end
