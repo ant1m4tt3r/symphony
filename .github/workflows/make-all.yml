@@ -17,6 +17,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify guard wrappers
+        working-directory: .
+        run: bash ./scripts/symphony/test-guards.sh
+
       - name: Set up mise tools
         uses: jdx/mise-action@v3
         with:

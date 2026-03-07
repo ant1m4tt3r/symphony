@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deny_push_main() {
+  echo "[symphony-guard] blocked: pushing to 'main' is disabled (PR flow only)." >&2
+  exit 43
+}
+
+real_git="${SYMPHONY_REAL_GIT:-}"
+if [[ -z "$real_git" || ! -x "$real_git" ]]; then
+  echo "[symphony-guard] missing real git binary via SYMPHONY_REAL_GIT; refusing to continue." >&2
+  exit 127
+fi
+
+if [[ "${1:-}" == "push" ]]; then
+  shift
+
+  for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+      exec "$real_git" push "$@"
+    fi
+  done
+
+  branch="$("$real_git" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  has_refspec=0
+  remote_seen=0
+
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      continue
+    fi
+
+    if [[ "$arg" == -* ]]; then
+      continue
+    fi
+
+    if [[ $remote_seen -eq 0 ]]; then
+      remote_seen=1
+      continue
+    fi
+
+    has_refspec=1
+
+    if [[ "$arg" == "main" || "$arg" == "refs/heads/main" ]]; then
+      deny_push_main
+    fi
+
+    if [[ "$arg" =~ :main$ || "$arg" =~ :refs/heads/main$ ]]; then
+      deny_push_main
+    fi
+  done
+
+  if [[ $has_refspec -eq 0 && "$branch" == "main" ]]; then
+    deny_push_main
+  fi
+
+  exec "$real_git" push "$@"
+fi
+
+exec "$real_git" "$@"

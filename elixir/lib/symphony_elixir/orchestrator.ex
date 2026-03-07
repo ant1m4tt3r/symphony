@@ -453,15 +453,61 @@ defmodule SymphonyElixir.Orchestrator do
   defp sort_issues_for_dispatch(issues) when is_list(issues) do
     Enum.sort_by(issues, fn
       %Issue{} = issue ->
-        {priority_rank(issue.priority), issue_created_at_sort_key(issue), issue.identifier || issue.id || ""}
+        {
+          state_dispatch_rank(issue.state),
+          issue_kind_rank(issue),
+          priority_rank(issue.priority),
+          issue_created_at_sort_key(issue),
+          issue.identifier || issue.id || ""
+        }
 
       _ ->
-        {priority_rank(nil), issue_created_at_sort_key(nil), ""}
+        {state_dispatch_rank(nil), issue_kind_rank(nil), priority_rank(nil), issue_created_at_sort_key(nil), ""}
     end)
   end
 
   defp priority_rank(priority) when is_integer(priority) and priority in 1..4, do: priority
   defp priority_rank(_priority), do: 5
+
+  defp state_dispatch_rank(state_name) when is_binary(state_name) do
+    case normalize_issue_state(state_name) do
+      "in review" -> 0
+      "human review" -> 0
+      "in progress" -> 1
+      "rework" -> 1
+      "todo" -> 2
+      "ready for dev" -> 3
+      "backlog" -> 4
+      _ -> 5
+    end
+  end
+
+  defp state_dispatch_rank(_state_name), do: 5
+
+  defp issue_kind_rank(%Issue{title: title, labels: labels}) do
+    normalized_title = normalize_issue_text(title)
+
+    cond do
+      epic_issue?(normalized_title, labels) -> 2
+      ongoing_issue?(normalized_title) -> 1
+      true -> 0
+    end
+  end
+
+  defp issue_kind_rank(_issue), do: 3
+
+  defp epic_issue?(normalized_title, labels) when is_binary(normalized_title) and is_list(labels) do
+    String.starts_with?(normalized_title, "[epic]") or
+      Enum.any?(labels, fn label ->
+        normalize_issue_text(label) == "epic"
+      end)
+  end
+
+  defp epic_issue?(_normalized_title, _labels), do: false
+
+  defp ongoing_issue?(normalized_title) when is_binary(normalized_title) do
+    String.starts_with?(normalized_title, "[ongoing]")
+  end
 
   defp issue_created_at_sort_key(%Issue{created_at: %DateTime{} = created_at}) do
     DateTime.to_unix(created_at, :microsecond)
@@ -561,6 +607,14 @@ defmodule SymphonyElixir.Orchestrator do
     String.downcase(String.trim(state_name))
   end
 
+  defp normalize_issue_text(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+  end
+
+  defp normalize_issue_text(_value), do: ""
+
   defp terminal_state_set do
     Config.linear_terminal_states()
     |> Enum.map(&normalize_issue_state/1)
@@ -597,6 +651,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp do_dispatch_issue(%State{} = state, issue, attempt) do
     recipient = self()
+    runtime_defaults = runtime_metadata_from_command(Config.codex_command())
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
            AgentRunner.run(issue, recipient, attempt: attempt)
@@ -623,6 +678,10 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_input_tokens: 0,
             codex_last_reported_output_tokens: 0,
             codex_last_reported_total_tokens: 0,
+            agent_command: Map.get(runtime_defaults, :command),
+            agent_engine: Map.get(runtime_defaults, :engine),
+            agent_provider: Map.get(runtime_defaults, :provider),
+            agent_model: Map.get(runtime_defaults, :model),
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
             started_at: DateTime.utc_now()
@@ -692,7 +751,13 @@ defmodule SymphonyElixir.Orchestrator do
 
     error_suffix = if is_binary(error), do: " error=#{error}", else: ""
 
-    Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+    log_message = "Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}"
+
+    case metadata[:delay_type] do
+      :slot_wait -> Logger.debug(log_message)
+      :continuation -> Logger.info(log_message)
+      _ -> Logger.warning(log_message)
+    end
 
     %{
       state
@@ -805,10 +870,11 @@ defmodule SymphonyElixir.Orchestrator do
        schedule_issue_retry(
          state,
          issue.id,
-         attempt + 1,
+         attempt,
          Map.merge(metadata, %{
            identifier: issue.identifier,
-           error: "no available orchestrator slots"
+           delay_type: :slot_wait,
+           error: nil
          })
        )}
     end
@@ -819,10 +885,15 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp retry_delay(attempt, metadata) when is_integer(attempt) and attempt > 0 and is_map(metadata) do
-    if metadata[:delay_type] == :continuation and attempt == 1 do
-      @continuation_retry_delay_ms
-    else
-      failure_retry_delay(attempt)
+    case metadata[:delay_type] do
+      :slot_wait ->
+        max(1_000, Config.poll_interval_ms())
+
+      :continuation when attempt == 1 ->
+        @continuation_retry_delay_ms
+
+      _ ->
+        failure_retry_delay(attempt)
     end
   end
 
@@ -846,7 +917,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp pick_retry_error(previous_retry, metadata) do
-    metadata[:error] || Map.get(previous_retry, :error)
+    if Map.has_key?(metadata, :error), do: metadata[:error], else: Map.get(previous_retry, :error)
   end
 
   defp find_issue_by_id(issues, issue_id) when is_binary(issue_id) do
@@ -925,7 +996,13 @@ defmodule SymphonyElixir.Orchestrator do
         %{
           issue_id: issue_id,
           identifier: metadata.identifier,
+          title: metadata.issue.title,
           state: metadata.issue.state,
+          priority: metadata.issue.priority,
+          url: metadata.issue.url,
+          assignee_id: metadata.issue.assignee_id,
+          updated_at: metadata.issue.updated_at,
+          branch_name: metadata.issue.branch_name,
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
@@ -936,6 +1013,10 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: metadata.last_codex_timestamp,
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
+          agent_command: Map.get(metadata, :agent_command),
+          agent_engine: Map.get(metadata, :agent_engine),
+          agent_provider: Map.get(metadata, :agent_provider),
+          agent_model: Map.get(metadata, :agent_model),
           runtime_seconds: running_seconds(metadata.started_at, now)
         }
       end)
@@ -986,6 +1067,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     token_delta = extract_token_delta(running_entry, update)
+    runtime_update = runtime_metadata_for_update(update)
     codex_input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
     codex_output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
     codex_total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
@@ -1008,7 +1090,11 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
-        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
+        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
+        agent_command: pick_runtime_value(runtime_update.command, Map.get(running_entry, :agent_command)),
+        agent_engine: pick_runtime_value(runtime_update.engine, Map.get(running_entry, :agent_engine)),
+        agent_provider: pick_runtime_value(runtime_update.provider, Map.get(running_entry, :agent_provider)),
+        agent_model: pick_runtime_value(runtime_update.model, Map.get(running_entry, :agent_model))
       }),
       token_delta
     }
@@ -1329,6 +1415,255 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp rate_limits_map?(_payload), do: false
+
+  defp runtime_metadata_for_update(update) when is_map(update) do
+    payloads = [
+      update[:payload],
+      Map.get(update, "payload"),
+      update
+    ]
+
+    command = Enum.find_value(payloads, &command_from_payload/1)
+    parsed = runtime_metadata_from_command(command)
+    payload_engine = Enum.find_value(payloads, &engine_from_payload/1)
+    payload_model = Enum.find_value(payloads, &model_from_payload/1)
+    payload_provider = Enum.find_value(payloads, &provider_from_payload/1)
+    engine = pick_runtime_value(payload_engine, parsed.engine)
+    model = pick_runtime_value(payload_model, parsed.model)
+
+    %{
+      command: pick_runtime_value(command, parsed.command),
+      engine: engine,
+      model: model,
+      provider:
+        pick_runtime_value(payload_provider, parsed.provider) ||
+          provider_from_model(engine, model)
+    }
+  end
+
+  defp runtime_metadata_from_command(command) when is_binary(command) do
+    trimmed = String.trim(command)
+    model = extract_model_from_command(trimmed)
+    engine = engine_from_command(trimmed, model)
+
+    %{
+      command: if(trimmed == "", do: nil, else: trimmed),
+      engine: engine,
+      model: model,
+      provider: provider_from_model(engine, model)
+    }
+  end
+
+  defp runtime_metadata_from_command(_command),
+    do: %{command: nil, engine: nil, model: nil, provider: nil}
+
+  defp command_from_payload(payload) when is_map(payload) do
+    paths = [
+      ["params", "msg", "command"],
+      [:params, :msg, :command],
+      ["params", "command"],
+      [:params, :command],
+      ["msg", "command"],
+      [:msg, :command],
+      ["command"],
+      [:command]
+    ]
+
+    Enum.find_value(paths, fn path ->
+      payload
+      |> map_at_path(path)
+      |> runtime_string_value()
+    end)
+  end
+
+  defp command_from_payload(_payload), do: nil
+
+  defp model_from_payload(payload) when is_map(payload) do
+    paths = [
+      ["params", "model"],
+      [:params, :model],
+      ["params", "msg", "model"],
+      [:params, :msg, :model],
+      ["model"],
+      [:model]
+    ]
+
+    Enum.find_value(paths, fn path ->
+      payload
+      |> map_at_path(path)
+      |> runtime_string_value()
+    end)
+  end
+
+  defp model_from_payload(_payload), do: nil
+
+  defp engine_from_payload(payload) when is_map(payload) do
+    paths = [
+      ["params", "engine"],
+      [:params, :engine],
+      ["engine"],
+      [:engine]
+    ]
+
+    Enum.find_value(paths, fn path ->
+      payload
+      |> map_at_path(path)
+      |> runtime_string_value()
+      |> normalize_engine_value()
+    end)
+  end
+
+  defp engine_from_payload(_payload), do: nil
+
+  defp provider_from_payload(payload) when is_map(payload) do
+    paths = [
+      ["params", "provider"],
+      [:params, :provider],
+      ["provider"],
+      [:provider]
+    ]
+
+    Enum.find_value(paths, fn path ->
+      payload
+      |> map_at_path(path)
+      |> runtime_string_value()
+      |> normalize_provider_value()
+    end)
+  end
+
+  defp provider_from_payload(_payload), do: nil
+
+  defp pick_runtime_value(value, fallback) do
+    case runtime_string_value(value) do
+      nil -> runtime_string_value(fallback)
+      normalized -> normalized
+    end
+  end
+
+  defp runtime_string_value(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp runtime_string_value(nil), do: nil
+
+  defp runtime_string_value(value) when is_atom(value) do
+    value
+    |> Atom.to_string()
+    |> runtime_string_value()
+  end
+
+  defp runtime_string_value(_value), do: nil
+
+  defp extract_model_from_command(command) when is_binary(command) do
+    case Regex.run(~r/(?:^|\s)--model(?:=|\s+)(\"[^\"]+\"|'[^']+'|\S+)/, command, capture: :all_but_first) do
+      [raw] ->
+        raw
+        |> String.trim()
+        |> String.trim_leading("\"")
+        |> String.trim_trailing("\"")
+        |> String.trim_leading("'")
+        |> String.trim_trailing("'")
+        |> runtime_string_value()
+
+      _ ->
+        nil
+    end
+  end
+
+  defp engine_from_command(command, model) when is_binary(command) do
+    normalized = String.downcase(command)
+    detect_engine(normalized) || if(is_binary(model), do: "custom")
+  end
+
+  defp detect_engine(normalized) do
+    cond do
+      opencode_command?(normalized) -> "opencode"
+      claude_command?(normalized) -> "claude"
+      String.contains?(normalized, "agent_router.sh") -> "mixed"
+      codex_command?(normalized) -> "codex"
+      true -> nil
+    end
+  end
+
+  defp opencode_command?(cmd) do
+    String.contains?(cmd, "opencode_app_server.py") or String.contains?(cmd, "opencode run")
+  end
+
+  defp claude_command?(cmd) do
+    String.contains?(cmd, "claude_app_server.py") or String.contains?(cmd, "claude ")
+  end
+
+  defp codex_command?(cmd) do
+    String.contains?(cmd, " codex ") or String.starts_with?(cmd, "codex ") or
+      String.contains?(cmd, "/codex")
+  end
+
+  defp normalize_engine_value(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
+
+  defp normalize_engine_value(_value), do: nil
+
+  defp normalize_provider_value(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> case do
+      "" -> nil
+      normalized -> normalized
+    end
+  end
+
+  defp normalize_provider_value(_value), do: nil
+
+  defp provider_from_model(engine, model) when is_binary(model) do
+    normalized = String.downcase(model)
+
+    cond do
+      String.contains?(normalized, "/") ->
+        normalized
+        |> String.split("/", parts: 2)
+        |> List.first()
+        |> normalize_provider_value()
+
+      String.starts_with?(normalized, "claude") ->
+        "anthropic"
+
+      String.starts_with?(normalized, "gpt") or String.contains?(normalized, "codex") ->
+        "openai"
+
+      String.starts_with?(normalized, "gemini") ->
+        "google"
+
+      String.starts_with?(normalized, "mistral") ->
+        "mistral"
+
+      String.starts_with?(normalized, "llama") ->
+        "meta"
+
+      true ->
+        provider_from_engine(engine)
+    end
+  end
+
+  defp provider_from_model(engine, _model), do: provider_from_engine(engine)
+
+  defp provider_from_engine(engine) when is_binary(engine) do
+    case String.downcase(engine) do
+      "claude" -> "anthropic"
+      "codex" -> "openai"
+      _ -> nil
+    end
+  end
+
+  defp provider_from_engine(_engine), do: nil
 
   defp explicit_map_at_paths(payload, paths) when is_map(payload) and is_list(paths) do
     Enum.find_value(paths, fn path ->
