@@ -97,7 +97,7 @@ assert_not_contains() {
 }
 
 git_missing_out="$TMP_DIR/git_missing.out"
-status="$(run_and_capture "$git_missing_out" env -u SYMPHONY_REAL_GIT "$GIT_WRAPPER" status)"
+status="$(run_and_capture "$git_missing_out" "$GIT_WRAPPER" status)"
 assert_exit 127 "$status" "git wrapper requires SYMPHONY_REAL_GIT"
 assert_contains "missing real git binary" "$git_missing_out" "git wrapper missing-binary error is actionable"
 
@@ -151,7 +151,7 @@ assert_not_contains "blocked: pushing to 'main'" "$git_push_feature_out" "featur
 assert_contains "push origin HEAD:refs/heads/feature/hug-11" "$FAKE_GIT_LOG" "git wrapper forwards allowed push to real git"
 
 gh_missing_out="$TMP_DIR/gh_missing.out"
-status="$(run_and_capture "$gh_missing_out" env -u SYMPHONY_REAL_GH "$GH_WRAPPER" pr view 1)"
+status="$(run_and_capture "$gh_missing_out" "$GH_WRAPPER" pr view 1)"
 assert_exit 127 "$status" "gh wrapper requires SYMPHONY_REAL_GH"
 assert_contains "missing real gh binary" "$gh_missing_out" "gh wrapper missing-binary error is actionable"
 
@@ -160,6 +160,7 @@ status="$(
   run_and_capture \
     "$gh_pr_merge_out" \
     env \
+      SYMPHONY_ALLOW_AUTO_MERGE=0 \
       SYMPHONY_REAL_GH="$TMP_DIR/fake_gh" \
       FAKE_GH_LOG="$FAKE_GH_LOG" \
       "$GH_WRAPPER" pr merge 123 --squash
@@ -172,11 +173,38 @@ status="$(
   run_and_capture \
     "$gh_api_merge_out" \
     env \
+      SYMPHONY_ALLOW_AUTO_MERGE=0 \
       SYMPHONY_REAL_GH="$TMP_DIR/fake_gh" \
       FAKE_GH_LOG="$FAKE_GH_LOG" \
       "$GH_WRAPPER" api repos/owner/repo/pulls/123/merge -X PUT
 )"
 assert_exit 42 "$status" "gh wrapper blocks merge API endpoint"
+
+gh_pr_merge_allowed_out="$TMP_DIR/gh_pr_merge_allowed.out"
+status="$(
+  run_and_capture \
+    "$gh_pr_merge_allowed_out" \
+    env \
+      SYMPHONY_ALLOW_AUTO_MERGE=1 \
+      SYMPHONY_REAL_GH="$TMP_DIR/fake_gh" \
+      FAKE_GH_LOG="$FAKE_GH_LOG" \
+      "$GH_WRAPPER" pr merge 456 --squash
+)"
+assert_exit 0 "$status" "gh wrapper allows gh pr merge when auto-merge is enabled"
+assert_contains "pr merge 456 --squash" "$FAKE_GH_LOG" "gh wrapper forwards merge command when auto-merge is enabled"
+
+gh_api_merge_allowed_out="$TMP_DIR/gh_api_merge_allowed.out"
+status="$(
+  run_and_capture \
+    "$gh_api_merge_allowed_out" \
+    env \
+      SYMPHONY_ALLOW_AUTO_MERGE=true \
+      SYMPHONY_REAL_GH="$TMP_DIR/fake_gh" \
+      FAKE_GH_LOG="$FAKE_GH_LOG" \
+      "$GH_WRAPPER" api repos/owner/repo/pulls/456/merge -X PUT
+)"
+assert_exit 0 "$status" "gh wrapper allows merge API endpoint when auto-merge is enabled"
+assert_contains "api repos/owner/repo/pulls/456/merge -X PUT" "$FAKE_GH_LOG" "gh wrapper forwards API merge when auto-merge is enabled"
 
 gh_pr_view_out="$TMP_DIR/gh_pr_view.out"
 status="$(

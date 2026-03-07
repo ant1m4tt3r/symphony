@@ -415,6 +415,54 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Enum.map(sorted, & &1.identifier) == ["MT-200", "MT-201", "MT-199"]
   end
 
+  test "orchestrator prioritizes in-review work and de-prioritizes epic planning tickets" do
+    in_review = %Issue{
+      id: "issue-review-1",
+      identifier: "MT-300",
+      title: "Address review feedback",
+      state: "In Review",
+      priority: 3,
+      created_at: ~U[2026-01-04 00:00:00Z]
+    }
+
+    todo_task = %Issue{
+      id: "issue-todo-1",
+      identifier: "MT-301",
+      title: "Implement task",
+      state: "Todo",
+      priority: 1,
+      created_at: ~U[2026-01-03 00:00:00Z]
+    }
+
+    todo_epic = %Issue{
+      id: "issue-epic-1",
+      identifier: "MT-302",
+      title: "[Epic] Planning container",
+      state: "Todo",
+      priority: 1,
+      created_at: ~U[2026-01-01 00:00:00Z]
+    }
+
+    backlog_task = %Issue{
+      id: "issue-backlog-1",
+      identifier: "MT-303",
+      title: "Backlog implementation task",
+      state: "Backlog",
+      priority: 1,
+      created_at: ~U[2026-01-01 00:00:00Z]
+    }
+
+    sorted =
+      Orchestrator.sort_issues_for_dispatch_for_test([
+        todo_epic,
+        in_review,
+        backlog_task,
+        todo_task
+      ])
+
+    assert Enum.map(sorted, & &1.identifier) == ["MT-300", "MT-301", "MT-302", "MT-303"]
+  end
+
   test "todo issue with non-terminal blocker is not dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,

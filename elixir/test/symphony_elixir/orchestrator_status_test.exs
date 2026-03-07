@@ -209,6 +209,74 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert is_integer(completed_state.codex_totals.seconds_running)
   end
 
+  test "orchestrator snapshot captures runtime engine/provider/model from command events" do
+    issue_id = "issue-runtime-metadata-snapshot"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-260",
+      title: "Runtime metadata snapshot test",
+      description: "Track runtime command metadata",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-260"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :RuntimeMetadataOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "codex/event/exec_command_begin",
+           "params" => %{
+             "msg" => %{"command" => "opencode run --format json --model openai/gpt-5 <PROMPT>"}
+           }
+         },
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+    assert snapshot_entry.agent_engine == "opencode"
+    assert snapshot_entry.agent_model == "openai/gpt-5"
+    assert snapshot_entry.agent_provider == "openai"
+    assert snapshot_entry.agent_command =~ "opencode run --format json --model openai/gpt-5"
+  end
+
   test "orchestrator snapshot tracks turn completed usage when present" do
     issue_id = "issue-turn-completed-usage"
 
@@ -967,6 +1035,68 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 8_000
     assert remaining_ms <= 10_500
+  end
+
+  test "slot-saturated retries do not escalate attempt and clear retry error" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      tracker_active_states: ["Todo", "In Progress"],
+      poll_interval_ms: 1_200,
+      max_concurrent_agents: 1
+    )
+
+    issue_id = "issue-slot-retry"
+    issue = %Issue{id: issue_id, identifier: "MT-SLOT", title: "Queued retry", state: "Todo"}
+    running_issue = %Issue{id: "issue-running", identifier: "MT-RUN", title: "Running", state: "In Progress"}
+
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+
+    orchestrator_name = Module.concat(__MODULE__, :SlotSaturatedRetryOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    now_ms = System.monotonic_time(:millisecond)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      issue: running_issue,
+      identifier: running_issue.identifier
+    }
+
+    retry_entry = %{
+      attempt: 2,
+      due_at_ms: now_ms,
+      identifier: issue.identifier,
+      error: "stale previous error"
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{running_issue.id => running_entry})
+      |> Map.put(:claimed, MapSet.new([running_issue.id, issue.id]))
+      |> Map.put(:retry_attempts, %{issue.id => retry_entry})
+    end)
+
+    send(pid, {:retry_issue, issue.id})
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    assert %{
+             attempt: 2,
+             due_at_ms: due_at_ms,
+             identifier: "MT-SLOT",
+             error: nil
+           } = state.retry_attempts[issue.id]
+
+    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+    assert remaining_ms >= 900
+    assert remaining_ms <= 1_400
   end
 
   test "status dashboard renders offline marker to terminal" do

@@ -1,2 +1,12 @@
-# Local environment (may contain secrets).
+# local harness config
 .env.symphony.local
+
+# local Symphony runtime outputs
+.symphony/WORKFLOW.generated.md
+.symphony/workspaces/
+
+# local feedback snapshots generated inside workspaces
+**/.symphony/pr-feedback.md
+**/.symphony/pr-feedback.state
+**/.symphony/linear-feedback.md
+**/.symphony/linear-feedback.state

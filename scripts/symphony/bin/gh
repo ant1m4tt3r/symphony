@@ -1,27 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+auto_merge_enabled() {
+  case "${SYMPHONY_ALLOW_AUTO_MERGE:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 deny_merge() {
   echo "[symphony-guard] blocked: automated PR merges are disabled (manual merge only)." >&2
   exit 42
 }
 
-if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
-  deny_merge
-fi
-
-if [[ "${1:-}" == "api" ]]; then
-  for arg in "$@"; do
-    if [[ "$arg" =~ /pulls/[0-9]+/merge([/?].*)?$ ]]; then
-      deny_merge
-    fi
-  done
-fi
-
 real_gh="${SYMPHONY_REAL_GH:-}"
 if [[ -z "$real_gh" || ! -x "$real_gh" ]]; then
   echo "[symphony-guard] missing real gh binary via SYMPHONY_REAL_GH; refusing to continue." >&2
   exit 127
+fi
+
+if ! auto_merge_enabled; then
+  if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
+    deny_merge
+  fi
+
+  if [[ "${1:-}" == "api" ]]; then
+    for arg in "$@"; do
+      if [[ "$arg" =~ /pulls/[0-9]+/merge([/?].*)?$ ]]; then
+        deny_merge
+      fi
+    done
+  fi
 fi
 
 exec "$real_gh" "$@"
