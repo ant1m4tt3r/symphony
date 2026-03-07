@@ -122,7 +122,8 @@ defmodule SymphonyElixir.Config do
                                  stall_timeout_ms: [
                                    type: :integer,
                                    default: @default_codex_stall_timeout_ms
-                                 ]
+                                 ],
+                                 allow_unsafe_merge_push: [type: :boolean, default: false]
                                ]
                              ],
                              hooks: [
@@ -330,6 +331,11 @@ defmodule SymphonyElixir.Config do
     |> max(0)
   end
 
+  @spec codex_allow_unsafe_merge_push?() :: boolean()
+  def codex_allow_unsafe_merge_push? do
+    get_in(validated_workflow_options(), [:codex, :allow_unsafe_merge_push])
+  end
+
   @spec workflow_prompt() :: String.t()
   def workflow_prompt do
     case current_workflow() do
@@ -528,6 +534,7 @@ defmodule SymphonyElixir.Config do
     |> put_if_present(:turn_timeout_ms, integer_value(Map.get(section, "turn_timeout_ms")))
     |> put_if_present(:read_timeout_ms, integer_value(Map.get(section, "read_timeout_ms")))
     |> put_if_present(:stall_timeout_ms, integer_value(Map.get(section, "stall_timeout_ms")))
+    |> put_if_present(:allow_unsafe_merge_push, boolean_value(Map.get(section, "allow_unsafe_merge_push")))
   end
 
   defp extract_hooks_options(section) do
