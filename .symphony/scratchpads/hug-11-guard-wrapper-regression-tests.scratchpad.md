@@ -27,6 +27,7 @@
 - Added `scripts/symphony/bin/gh` guard wrapper to block `gh pr merge` and merge API endpoint calls.
 - Added `scripts/symphony/test-guards.sh` regression harness with fake `git`/`gh` binaries and assertions for allowed/blocked flows.
 - Updated `.github/workflows/make-all.yml` to run `scripts/symphony/test-guards.sh` in CI.
+- Updated `elixir/test/symphony_elixir/core_test.exs` to assert a generic GitHub owner in `after_create` clone URL, fixing CI brittleness with fork URLs.
 
 ## Notes
 - 2026-03-07T13:08:21Z: Created issue branch and initialized scratchpad.
@@ -38,3 +39,7 @@
   - `SymphonyElixir.CoreTest` expected clone URL `openai/symphony`, but `WORKFLOW.md` currently uses `ant1m4tt3r/symphony`.
 - 2026-03-07T13:14:11Z: Tracker caveat: Linear `commentUpdate/commentDelete/commentResolve` are blocked by token scope (`Invalid scope: write required`), so only initial workpad comment creation succeeded in this session.
 - 2026-03-07T13:20:07Z: Pushed branch, opened PR #7, added `symphony` label, and moved Linear issue `HUG-11` to `In Review`; `make-all` check is currently in progress.
+- 2026-03-07T13:23:23Z: Investigated failed CI run and fixed `CoreTest` to accept `https://github.com/<owner>/symphony` in `WORKFLOW.md` `after_create`.
+- 2026-03-07T13:23:54Z: Validation passed:
+  - `cd elixir && mix test test/symphony_elixir/core_test.exs:74`
+  - `bash ./scripts/symphony/test-guards.sh`
