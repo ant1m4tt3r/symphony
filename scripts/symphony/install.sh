@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
-# Harness install script for Symphony (Elixir reference implementation).
-# Installs mise toolchain and project dependencies.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
-project_root="$repo_root/elixir"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SYMPHONY_HOME="${SYMPHONY_HOME:-$REPO_ROOT}"
 
-# --- mise ---
-if ! command -v mise >/dev/null 2>&1; then
-  echo "mise is required. Install it from https://mise.jdx.dev/getting-started.html" >&2
+if [[ ! -d "$SYMPHONY_HOME/elixir" ]]; then
+  echo "Symphony source not found at: $SYMPHONY_HOME/elixir" >&2
+  echo "Set SYMPHONY_HOME to your fork root if needed." >&2
   exit 1
 fi
 
-cd "$project_root"
+cd "$SYMPHONY_HOME/elixir"
 mise trust
 mise install
+mise exec -- mix setup
+mise exec -- mix build
 
-# --- Elixir dependencies ---
-mise exec -- mix local.hex --force --if-missing
-mise exec -- mix local.rebar --force --if-missing
-mise exec -- mix deps.get
-
-echo "install.sh completed successfully."
+echo "Symphony built at: $SYMPHONY_HOME/elixir"

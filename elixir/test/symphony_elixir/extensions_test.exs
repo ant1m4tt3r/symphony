@@ -358,6 +358,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "agent_engine" => nil,
                  "agent_override" => nil,
                  "effective_agent" => "claude",
+                 "agent" => %{
+                   "command" => nil,
+                   "engine" => nil,
+                   "provider" => nil,
+                   "model" => nil
+                 },
                  "session_id" => "thread-http",
                  "turn_count" => 7,
                  "last_event" => "notification",
@@ -402,6 +408,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
+               "agent" => %{
+                 "command" => nil,
+                 "engine" => nil,
+                 "provider" => nil,
+                 "model" => nil
+               },
                "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
              },
              "retry" => nil,
