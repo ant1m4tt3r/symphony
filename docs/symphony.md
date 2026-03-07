@@ -70,7 +70,7 @@ Distribute agents across Codex and OpenCode:
 
 ```bash
 SYMPHONY_AI_ENGINE=mixed \
-SYMPHONY_AGENT_ROUTER_MAP=codex:3,opencode:2 \
+SYMPHONY_AGENT_ROUTER_MAP=claude:6,codex:1,opencode:1 \
 ./scripts/symphony/start.sh
 ```
 
@@ -85,7 +85,7 @@ Engine env vars:
 - `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls; default is blocked.
   - This also enables `codex.allow_unsafe_merge_push: true` in generated workflow so app-server approval guardrails do not block merge commands.
 - Mixed routing options:
-  - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (example `codex:3,opencode:2`).
+  - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (default `claude:6,codex:1,opencode:1`; example `claude:6,codex:1,opencode:1`).
   - `SYMPHONY_AGENT_ROUTER_FALLBACK`: fallback engine when selected engine is unavailable (default `codex`).
   - `SYMPHONY_ROUTER_CODEX_COMMAND`: optional Codex command override for router mode.
   - `SYMPHONY_ROUTER_OPENCODE_COMMAND`: optional OpenCode command override for router mode.
