@@ -194,6 +194,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   <col style="width: 8rem;" />
                   <col style="width: 7.5rem;" />
                   <col style="width: 8.5rem;" />
+                  <col style="width: 12rem;" />
                   <col />
                   <col style="width: 10rem;" />
                 </colgroup>
@@ -203,6 +204,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <th>State</th>
                     <th>Session</th>
                     <th>Runtime / turns</th>
+                    <th>Agent runtime</th>
                     <th>Codex update</th>
                     <th>Tokens</th>
                   </tr>
@@ -238,6 +240,19 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       </div>
                     </td>
                     <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
+                    <td>
+                      <div class="agent-stack">
+                        <span class={agent_badge_class(agent_field(entry.agent, :engine))}>
+                          <%= display_agent_engine(agent_field(entry.agent, :engine)) %>
+                        </span>
+                        <span class="muted event-meta">
+                          model · <span class="mono"><%= display_or_na(agent_field(entry.agent, :model)) %></span>
+                        </span>
+                        <span class="muted event-meta">
+                          provider · <span class="mono"><%= display_or_na(agent_field(entry.agent, :provider)) %></span>
+                        </span>
+                      </div>
+                    </td>
                     <td>
                       <div class="detail-stack">
                         <span
@@ -412,6 +427,49 @@ defmodule SymphonyElixirWeb.DashboardLive do
       diff < 3_600 -> "#{div(diff, 60)}m ago"
       diff < 86_400 -> "#{div(diff, 3_600)}h ago"
       true -> "#{div(diff, 86_400)}d ago"
+    end
+  end
+
+  defp display_or_na(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: "n/a", else: trimmed
+  end
+
+  defp display_or_na(value) when is_atom(value) do
+    value
+    |> Atom.to_string()
+    |> display_or_na()
+  end
+
+  defp display_or_na(_value), do: "n/a"
+
+  defp agent_field(agent, field) when is_map(agent) do
+    Map.get(agent, field) || Map.get(agent, Atom.to_string(field))
+  end
+
+  defp agent_field(_agent, _field), do: nil
+
+  defp display_agent_engine(engine) do
+    case display_or_na(engine) do
+      "codex" -> "Codex"
+      "claude" -> "Claude"
+      "opencode" -> "OpenCode"
+      "mixed" -> "Mixed"
+      "custom" -> "Custom"
+      other -> other
+    end
+  end
+
+  defp agent_badge_class(engine) do
+    base = "agent-badge"
+
+    case display_or_na(engine) do
+      "codex" -> "#{base} agent-badge-codex"
+      "claude" -> "#{base} agent-badge-claude"
+      "opencode" -> "#{base} agent-badge-opencode"
+      "mixed" -> "#{base} agent-badge-mixed"
+      "custom" -> "#{base} agent-badge-custom"
+      _ -> "#{base} agent-badge-unknown"
     end
   end
 

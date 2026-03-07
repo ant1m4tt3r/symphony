@@ -306,7 +306,7 @@ pre,
 
 .data-table-running {
   table-layout: fixed;
-  min-width: 980px;
+  min-width: 1120px;
 }
 
 .data-table th {
@@ -329,10 +329,58 @@ pre,
 .issue-stack,
 .session-stack,
 .detail-stack,
+.agent-stack,
 .token-stack {
   display: grid;
   gap: 0.24rem;
   min-width: 0;
+}
+
+.agent-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 1.5rem;
+  padding: 0.12rem 0.56rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: #f5f5f7;
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.agent-badge-codex {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.agent-badge-claude {
+  border-color: #fddbb0;
+  background: #fff4e8;
+  color: #7c2d12;
+}
+
+.agent-badge-opencode {
+  border-color: #bce6db;
+  background: #ecfbf6;
+  color: #0f513f;
+}
+
+.agent-badge-mixed {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.agent-badge-custom,
+.agent-badge-unknown {
+  border-color: var(--line-strong);
+  background: #f5f5f7;
+  color: #4b5563;
 }
 
 .event-text {

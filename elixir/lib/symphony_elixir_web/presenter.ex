@@ -111,6 +111,12 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      agent: %{
+        command: entry.agent_command,
+        engine: entry.agent_engine,
+        provider: entry.agent_provider,
+        model: entry.agent_model
+      },
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -138,6 +144,12 @@ defmodule SymphonyElixirWeb.Presenter do
       last_event: running.last_codex_event,
       last_message: summarize_message(running.last_codex_message),
       last_event_at: iso8601(running.last_codex_timestamp),
+      agent: %{
+        command: running.agent_command,
+        engine: running.agent_engine,
+        provider: running.agent_provider,
+        model: running.agent_model
+      },
       tokens: %{
         input_tokens: running.codex_input_tokens,
         output_tokens: running.codex_output_tokens,
