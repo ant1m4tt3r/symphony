@@ -474,16 +474,22 @@ defmodule SymphonyElixir.Codex.AppServer do
          _tool_executor,
          auto_approve_requests
        ) do
-    approve_or_require(
-      port,
-      id,
-      "acceptForSession",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
+    case maybe_block_risky_merge_push_command(payload) do
+      :blocked ->
+        :approval_required
+
+      :ok ->
+        approve_or_require(
+          port,
+          id,
+          "acceptForSession",
+          payload,
+          payload_string,
+          on_message,
+          metadata,
+          auto_approve_requests
+        )
+    end
   end
 
   defp maybe_handle_approval_request(
@@ -528,16 +534,22 @@ defmodule SymphonyElixir.Codex.AppServer do
          _tool_executor,
          auto_approve_requests
        ) do
-    approve_or_require(
-      port,
-      id,
-      "approved_for_session",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
+    case maybe_block_risky_merge_push_command(payload) do
+      :blocked ->
+        :approval_required
+
+      :ok ->
+        approve_or_require(
+          port,
+          id,
+          "approved_for_session",
+          payload,
+          payload_string,
+          on_message,
+          metadata,
+          auto_approve_requests
+        )
+    end
   end
 
   defp maybe_handle_approval_request(
@@ -942,6 +954,109 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp tool_call_arguments(_params), do: %{}
+
+  defp maybe_block_risky_merge_push_command(payload) do
+    if merge_push_guardrails_enabled?() do
+      case approval_payload_command(payload) do
+        command when is_binary(command) ->
+          if risky_merge_or_push_command?(command) do
+            Logger.warning("Blocking risky merge/push command approval request: #{command}")
+            :blocked
+          else
+            :ok
+          end
+
+        _ ->
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp merge_push_guardrails_enabled? do
+    not Config.codex_allow_unsafe_merge_push?()
+  end
+
+  defp approval_payload_command(%{} = payload) do
+    params =
+      case Map.get(payload, "params") || Map.get(payload, :params) do
+        %{} = request_params -> request_params
+        _ -> %{}
+      end
+
+    params
+    |> Map.get("parsedCmd")
+    |> fallback_approval_payload_command(params)
+    |> normalize_approval_payload_command()
+  end
+
+  defp approval_payload_command(_payload), do: nil
+
+  defp fallback_approval_payload_command(nil, params) do
+    Map.get(params, "command") || Map.get(params, "cmd") || Map.get(params, "argv") || Map.get(params, "args")
+  end
+
+  defp fallback_approval_payload_command(command, _params), do: command
+
+  defp normalize_approval_payload_command(%{} = command) do
+    binary_command = Map.get(command, "parsedCmd") || Map.get(command, "command") || Map.get(command, "cmd")
+    args = Map.get(command, "args") || Map.get(command, "argv")
+
+    if is_binary(binary_command) and is_list(args) do
+      normalize_approval_payload_command([binary_command | args])
+    else
+      normalize_approval_payload_command(binary_command || args)
+    end
+  end
+
+  defp normalize_approval_payload_command(command) when is_binary(command) do
+    trimmed = String.trim(command)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_approval_payload_command(command) when is_list(command) do
+    if Enum.all?(command, &is_binary/1) do
+      command
+      |> Enum.join(" ")
+      |> normalize_approval_payload_command()
+    else
+      nil
+    end
+  end
+
+  defp normalize_approval_payload_command(_command), do: nil
+
+  defp risky_merge_or_push_command?(command) do
+    normalized_command =
+      command
+      |> String.trim()
+      |> String.downcase()
+
+    normalized_command != "" and
+      (risky_gh_merge_command?(normalized_command) or
+         risky_git_merge_to_main_command?(normalized_command) or
+         risky_git_push_to_main_command?(normalized_command))
+  end
+
+  defp risky_gh_merge_command?(command) do
+    String.match?(command, ~r/\bgh\s+pr\s+merge\b/) or
+      (String.match?(command, ~r/\bgh\s+api\b/) and
+         (String.match?(command, ~r/\bpulls\/[^\s]+\/merge\b/) or
+            String.contains?(command, "mergepullrequest")))
+  end
+
+  defp risky_git_merge_to_main_command?(command) do
+    String.match?(command, ~r/\bgit\s+merge\b/) and
+      String.match?(command, ~r/\bgit\s+(?:checkout|switch)\b[^;&|\n]*\bmain\b/)
+  end
+
+  defp risky_git_push_to_main_command?(command) do
+    String.match?(command, ~r/\bgit\s+push\b/) and
+      (String.match?(command, ~r/\bgit\s+push\b[^;&|\n]*\smain(?:\s|$)/) or
+         String.match?(command, ~r/\bgit\s+push\b[^;&|\n]*:[[:space:]]*main(?:\s|$)/) or
+         String.match?(command, ~r/\bgit\s+push\b[^;&|\n]*refs\/heads\/main(?:\s|$)/))
+  end
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"
