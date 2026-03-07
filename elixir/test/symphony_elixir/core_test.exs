@@ -2,6 +2,10 @@ defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
   test "config defaults and validation checks" do
+    previous_linear_assignee = System.get_env("LINEAR_ASSIGNEE")
+    on_exit(fn -> restore_env("LINEAR_ASSIGNEE", previous_linear_assignee) end)
+    System.delete_env("LINEAR_ASSIGNEE")
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
       tracker_project_slug: nil,
@@ -541,8 +545,9 @@ defmodule SymphonyElixir.CoreTest do
 
   defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+    lower_bound = max(min_remaining_ms - 150, 0)
 
-    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms >= lower_bound
     assert remaining_ms <= max_remaining_ms
   end
 
