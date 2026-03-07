@@ -260,6 +260,11 @@ defmodule SymphonyElixir.Config do
     get_in(validated_workflow_options(), [:agent, :engine])
   end
 
+  @spec supported_agent_engines() :: [String.t()]
+  def supported_agent_engines do
+    @supported_agent_engines
+  end
+
   @spec max_concurrent_agents() :: pos_integer()
   def max_concurrent_agents do
     get_in(validated_workflow_options(), [:agent, :max_concurrent_agents])

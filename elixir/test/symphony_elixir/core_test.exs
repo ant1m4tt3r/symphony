@@ -98,6 +98,20 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.workflow_prompt() == prompt
   end
 
+  test "dispatch engine resolution prefers card override over global default" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_project_slug: "project",
+      tracker_api_token: "token",
+      agent_engine: "claude"
+    )
+
+    state = %Orchestrator.State{agent_overrides: %{"issue-override" => "codex"}}
+
+    assert Orchestrator.effective_agent_for_dispatch_for_test("issue-override", state) == "codex"
+    assert Orchestrator.effective_agent_for_dispatch_for_test("issue-global", state) == "claude"
+    assert Orchestrator.effective_agent_for_dispatch_for_test(nil, state) == "claude"
+  end
+
   test "linear api token resolves from LINEAR_API_KEY env var" do
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
     env_api_key = "test-linear-api-key"

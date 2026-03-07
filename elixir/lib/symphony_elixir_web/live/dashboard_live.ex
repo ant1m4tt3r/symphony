@@ -38,6 +38,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event(
+        "set-task-agent-override",
+        %{"issue_id" => issue_id, "agent_override" => agent_override},
+        socket
+      ) do
+    _result = maybe_set_task_agent_override(orchestrator(), issue_id, agent_override)
+    {:noreply, assign(socket, :payload, load_payload())}
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
@@ -149,6 +159,38 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <span class="task-card-meta-label">Runtime</span>
                     <span class="task-card-meta-value numeric"><%= format_runtime_seconds(runtime_seconds_from_started_at(entry.started_at, @now)) %></span>
                   </span>
+                </div>
+
+                <div class="task-card-agent">
+                  <div class="task-card-agent-row">
+                    <span class="task-card-meta-label">Agent dispatch</span>
+                    <span class={agent_scope_badge_class(entry[:agent_override])}>
+                      <%= agent_scope_badge_label(entry[:agent_override], @payload[:agent_engine]) %>
+                    </span>
+                  </div>
+
+                  <form class="task-card-agent-form" phx-change="set-task-agent-override">
+                    <input type="hidden" name="issue_id" value={entry.issue_id} />
+                    <label class="task-card-meta-label" for={"agent-override-#{entry.issue_id}"}>
+                      Card override
+                    </label>
+                    <select
+                      id={"agent-override-#{entry.issue_id}"}
+                      class="task-card-agent-select"
+                      name="agent_override"
+                    >
+                      <option value="" selected={is_nil(entry[:agent_override])}>
+                        Inherit global (<%= engine_label(@payload[:agent_engine]) %>)
+                      </option>
+                      <option value="claude" selected={entry[:agent_override] == "claude"}>Claude</option>
+                      <option value="codex" selected={entry[:agent_override] == "codex"}>Codex</option>
+                    </select>
+                  </form>
+
+                  <p class="task-card-agent-note">
+                    Current run: <strong><%= engine_label(entry[:agent_engine] || entry[:effective_agent]) %></strong>
+                    · Next dispatch: <strong><%= engine_label(entry[:effective_agent]) %></strong>
+                  </p>
                 </div>
 
                 <div class="task-card-links">
@@ -415,6 +457,41 @@ defmodule SymphonyElixirWeb.DashboardLive do
       diff < 3_600 -> "#{div(diff, 60)}m ago"
       diff < 86_400 -> "#{div(diff, 3_600)}h ago"
       true -> "#{div(diff, 86_400)}d ago"
+    end
+  end
+
+  defp engine_label(engine) when is_binary(engine) do
+    case engine |> String.trim() |> String.downcase() do
+      "codex" -> "Codex"
+      "claude" -> "Claude"
+      normalized when normalized != "" -> String.capitalize(normalized)
+      _ -> "Claude"
+    end
+  end
+
+  defp engine_label(_engine), do: "Claude"
+
+  defp agent_scope_badge_label(nil, global_engine) do
+    "Using global #{engine_label(global_engine)}"
+  end
+
+  defp agent_scope_badge_label(agent_override, global_engine) do
+    "Override #{engine_label(agent_override)} · Global #{engine_label(global_engine)}"
+  end
+
+  defp agent_scope_badge_class(nil), do: "task-card-agent-badge task-card-agent-badge-global"
+  defp agent_scope_badge_class(_agent_override), do: "task-card-agent-badge task-card-agent-badge-override"
+
+  defp maybe_set_task_agent_override(orchestrator, issue_id, agent_override) do
+    cond do
+      function_exported?(orchestrator, :set_issue_agent_override, 3) ->
+        orchestrator.set_issue_agent_override(orchestrator, issue_id, agent_override)
+
+      function_exported?(orchestrator, :set_issue_agent_override, 2) ->
+        orchestrator.set_issue_agent_override(issue_id, agent_override)
+
+      true ->
+        :ok
     end
   end
 
