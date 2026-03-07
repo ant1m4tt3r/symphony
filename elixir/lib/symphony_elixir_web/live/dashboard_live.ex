@@ -126,22 +126,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <%= entry.state %>
                     </span>
                   </div>
-                  <%= if entry[:priority] do %>
-                    <span class={"task-card-priority #{priority_class(entry.priority)}"}>
-                      <%= priority_label(entry.priority) %>
-                    </span>
-                  <% end %>
+                  <span class={"task-card-priority #{priority_class(entry.priority)}"}>
+                    <%= priority_label(entry[:priority]) %>
+                  </span>
                 </div>
 
                 <h3 class="task-card-title"><%= entry[:title] || entry.issue_identifier %></h3>
 
                 <div class="task-card-meta">
-                  <%= if entry[:assignee_id] do %>
-                    <span class="task-card-meta-item">
-                      <span class="task-card-meta-label">Assignee</span>
-                      <span class="task-card-meta-value mono"><%= truncate_id(entry.assignee_id) %></span>
-                    </span>
-                  <% end %>
+                  <span class="task-card-meta-item">
+                    <span class="task-card-meta-label">Assignee</span>
+                    <span class="task-card-meta-value mono"><%= assignee_label(entry[:assignee_id]) %></span>
+                  </span>
                   <span class="task-card-meta-item">
                     <span class="task-card-meta-label">Updated</span>
                     <span class="task-card-meta-value mono"><%= format_relative_time(entry[:updated_at] || entry[:started_at], @now) %></span>
@@ -372,6 +368,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp format_int(_value), do: "n/a"
 
+  defp priority_label(nil), do: "No priority"
   defp priority_label(0), do: "No priority"
   defp priority_label(1), do: "Urgent"
   defp priority_label(2), do: "High"
@@ -394,6 +391,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp truncate_id(id), do: to_string(id)
+
+  defp assignee_label(nil), do: "Unassigned"
+  defp assignee_label(id), do: truncate_id(id)
 
   defp format_relative_time(nil, _now), do: "n/a"
 
