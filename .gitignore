@@ -1,0 +1,2 @@
+# Local environment (may contain secrets).
+.env.symphony.local
