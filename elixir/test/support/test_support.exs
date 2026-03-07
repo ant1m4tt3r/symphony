@@ -106,6 +106,7 @@ defmodule SymphonyElixir.TestSupport do
           max_turns: 20,
           max_retry_backoff_ms: 300_000,
           max_concurrent_agents_by_state: %{},
+          agent_engine: nil,
           codex_command: "codex app-server",
           claude_command: "claude app-server",
           codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
@@ -144,6 +145,7 @@ defmodule SymphonyElixir.TestSupport do
     max_turns = Keyword.get(config, :max_turns)
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
+    agent_engine = Keyword.get(config, :agent_engine)
     codex_command = Keyword.get(config, :codex_command)
     claude_command = Keyword.get(config, :claude_command)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
@@ -181,6 +183,7 @@ defmodule SymphonyElixir.TestSupport do
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
         "agent:",
+        agent_engine && "  engine: #{yaml_value(agent_engine)}",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
         "  runtime: #{yaml_value(agent_runtime)}",
         "  max_turns: #{yaml_value(max_turns)}",

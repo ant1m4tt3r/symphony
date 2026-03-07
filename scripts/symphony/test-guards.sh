@@ -97,7 +97,7 @@ assert_not_contains() {
 }
 
 git_missing_out="$TMP_DIR/git_missing.out"
-status="$(run_and_capture "$git_missing_out" "$GIT_WRAPPER" status)"
+status="$(run_and_capture "$git_missing_out" env -u SYMPHONY_REAL_GIT "$GIT_WRAPPER" status)"
 assert_exit 127 "$status" "git wrapper requires SYMPHONY_REAL_GIT"
 assert_contains "missing real git binary" "$git_missing_out" "git wrapper missing-binary error is actionable"
 
@@ -151,7 +151,7 @@ assert_not_contains "blocked: pushing to 'main'" "$git_push_feature_out" "featur
 assert_contains "push origin HEAD:refs/heads/feature/hug-11" "$FAKE_GIT_LOG" "git wrapper forwards allowed push to real git"
 
 gh_missing_out="$TMP_DIR/gh_missing.out"
-status="$(run_and_capture "$gh_missing_out" "$GH_WRAPPER" pr view 1)"
+status="$(run_and_capture "$gh_missing_out" env -u SYMPHONY_REAL_GH "$GH_WRAPPER" pr view 1)"
 assert_exit 127 "$status" "gh wrapper requires SYMPHONY_REAL_GH"
 assert_contains "missing real gh binary" "$gh_missing_out" "gh wrapper missing-binary error is actionable"
 
