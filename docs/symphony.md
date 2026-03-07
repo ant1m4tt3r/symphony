@@ -110,6 +110,7 @@ Engine env vars:
 - `SYMPHONY_AGENT_COMMAND`: full command override for the agent runtime.
 - `CODEX_COMMAND`: legacy alias still supported for backward compatibility.
 - `SYMPHONY_POLL_INTERVAL_MS`: tracker polling interval in milliseconds (default `2000`).
+- `SYMPHONY_HOOK_TIMEOUT_MS`: workspace hook timeout in milliseconds (default `180000`). Increase when `after_create` bootstrap needs longer than 60s.
 - `SYMPHONY_MAX_TURNS`: max continuation turns per agent run (default `8`; lower means faster reaction to new comments/state updates).
 - `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls; default is blocked.
   - This also enables `codex.allow_unsafe_merge_push: true` in generated workflow so app-server approval guardrails do not block merge commands.
@@ -143,6 +144,7 @@ Claude mode note:
 - Before each agent run, `scripts/symphony/bin/sync_feedback.sh` updates feedback snapshots:
   - `.symphony/pr-feedback.md` for GitHub PR metadata, comments/reviews, and checks.
   - `.symphony/linear-feedback.md` for Linear issue snapshot and latest comments.
+- PR feedback now includes an explicit mergeability snapshot (`mergeStateStatus`, review decision, head/base refs, `requires_update_branch`) so agents can detect conflicts and run update-branch flow quickly.
 - Sync is incremental and cached via:
   - `.symphony/pr-feedback.state`
   - `.symphony/linear-feedback.state`
@@ -151,6 +153,12 @@ Claude mode note:
   - `SYMPHONY_PR_COMMENT_LIMIT` (default `20`)
   - `SYMPHONY_LINEAR_COMMENT_LIMIT` (default `20`)
 - Agents must treat both feedback files as mandatory review input when present.
+
+## Conflict handling
+
+- Workspace setup enables Git `rerere` (`rerere.enabled=true`, `rerere.autoupdate=true`) to reduce repeat conflict effort.
+- Agents are expected to keep branches mergeable by running the `.codex/skills/pull` merge-based update flow with `origin/main` whenever PR mergeability is dirty/conflicted.
+- Treat GitHub `mergeStateStatus` values `DIRTY`, `BEHIND`, `BLOCKED`, and `UNSTABLE` as immediate update-branch signals.
 
 ## Helper
 
@@ -162,6 +170,10 @@ To list project slugs from your Linear workspace:
 
 ## Status policy
 
+- PR-only flow: all changes must go through pull requests targeting `main`.
+  Direct pushes to `main` are not allowed.
+- Manual-only merge by default: unless `SYMPHONY_ALLOW_AUTO_MERGE=1`, PRs stay
+  human-merged only.
 - Move to `In Review` only after a working PR exists (open, non-draft, target `main`, linked to the issue, with commits).
 - If an issue begins in `Backlog`, `Todo`, or `Ready for Dev`, Symphony may move it to `In Progress` before implementation.
 - Dispatch prioritization favors active delivery:

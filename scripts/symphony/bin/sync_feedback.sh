@@ -31,7 +31,11 @@ sync_github_feedback() {
     return 0
   fi
 
-  pr_meta_json="$(gh pr view "$pr_number" --json number,title,url,updatedAt,isDraft 2>/dev/null || true)"
+  pr_meta_json="$(
+    gh pr view "$pr_number" \
+      --json number,title,url,updatedAt,isDraft,mergeStateStatus,reviewDecision,headRefName,baseRefName \
+      2>/dev/null || true
+  )"
 
   if command -v jq >/dev/null 2>&1; then
     pr_updated_at="$(printf '%s' "$pr_meta_json" | jq -r '.updatedAt // empty' 2>/dev/null || true)"
@@ -96,9 +100,38 @@ sync_github_feedback() {
     review_comments_output="$(cat "$tmpdir/review_comments.json")"
   fi
 
+  local pr_merge_state pr_review_decision pr_head_ref pr_base_ref pr_requires_update_branch
+
+  if command -v jq >/dev/null 2>&1; then
+    pr_merge_state="$(printf '%s' "$pr_meta_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")"
+    pr_review_decision="$(printf '%s' "$pr_meta_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")"
+    pr_head_ref="$(printf '%s' "$pr_meta_json" | jq -r '.headRefName // ""' 2>/dev/null || true)"
+    pr_base_ref="$(printf '%s' "$pr_meta_json" | jq -r '.baseRefName // ""' 2>/dev/null || true)"
+  else
+    pr_merge_state="UNKNOWN"
+    pr_review_decision="NONE"
+    pr_head_ref=""
+    pr_base_ref=""
+  fi
+
+  pr_requires_update_branch="false"
+  case "$pr_merge_state" in
+    DIRTY|BEHIND|BLOCKED|UNSTABLE)
+      pr_requires_update_branch="true"
+      ;;
+  esac
+
   {
     echo "### PR metadata ($(now_utc))"
     printf '%s\n' "$pr_meta_json"
+    echo ""
+    echo "----"
+    echo "### PR mergeability snapshot ($(now_utc))"
+    printf 'merge_state_status: %s\n' "$pr_merge_state"
+    printf 'review_decision: %s\n' "$pr_review_decision"
+    printf 'head_ref: %s\n' "$pr_head_ref"
+    printf 'base_ref: %s\n' "$pr_base_ref"
+    printf 'requires_update_branch: %s\n' "$pr_requires_update_branch"
     echo ""
     echo "----"
     echo "### PR conversation comments (latest ${SYMPHONY_PR_COMMENT_LIMIT})"

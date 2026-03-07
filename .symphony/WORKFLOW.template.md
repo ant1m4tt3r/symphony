@@ -19,8 +19,11 @@ polling:
 workspace:
   root: "__SYMPHONY_WORKSPACE_ROOT__"
 hooks:
+  timeout_ms: __HOOK_TIMEOUT_MS__
   after_create: |
     git clone --depth 1 "__SOURCE_REPO_URL__" .
+    git config rerere.enabled true
+    git config rerere.autoupdate true
     cat > .git/hooks/pre-push <<'HOOK'
     #!/usr/bin/env bash
     set -euo pipefail
@@ -92,6 +95,8 @@ Execution contract:
     - If `SYMPHONY_ALLOW_AUTO_MERGE=1`, you may merge eligible PRs after checks pass and review feedback is addressed.
     - Otherwise, keep merge manual-only.
 11. For meta-driver tickets (for example title prefixed `[Ongoing]`), perform backlog grooming: create/update actionable child tasks with explicit acceptance criteria and priority so implementation work can be dispatched next.
+12. Keep your branch mergeable: before requesting review, and whenever PR mergeability becomes dirty/conflicted, run the `.codex/skills/pull` merge-based update flow with `origin/main`, resolve conflicts, and push.
+13. Treat these GitHub `merge_state_status` values as must-act signals from `.symphony/pr-feedback.md`: `DIRTY`, `BEHIND`, `BLOCKED`, `UNSTABLE`. When seen, immediately run the `.codex/skills/pull` flow and push an updated branch.
 
 Status transition gates (strict):
 1. Move an issue to `In Review` only when a working GitHub PR exists.
@@ -106,6 +111,8 @@ Status transition gates (strict):
    - Do not start new feature work outside review scope.
    - If `SYMPHONY_ALLOW_AUTO_MERGE=1`, merge only when CI/checks are green and no unresolved human review actions remain.
    - If auto-merge is disabled, never merge the PR yourself (no `gh pr merge`, no merge via API/UI automation).
+   - If PR mergeability is dirty/conflicted, immediately run the `.codex/skills/pull` update-branch flow, resolve conflicts, and push.
+   - If PR mergeability snapshot says `requires_update_branch: true`, do not wait; run update-branch now and push.
    - Continuously monitor PR checks/CI and PR comments/suggestions.
    - Continuously monitor Linear issue comments for new steering from maintainers.
    - At the start of each `In Review` pass, fetch the latest PR checks and discussion from GitHub before deciding there is no action.
