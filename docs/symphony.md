@@ -1,6 +1,7 @@
 # Symphony Fork Harness
 
-This fork includes a local harness to run Symphony from this repository (`/Users/antimatter/Dev/repos/symphony`) with dashboard + Linear tracker.
+This fork includes a local harness to run Symphony from this repository with
+dashboard + Linear tracker.
 
 ## Files
 
@@ -13,12 +14,20 @@ This fork includes a local harness to run Symphony from this repository (`/Users
 
 ## First-time setup
 
-1. Fill `LINEAR_PROJECT_SLUG` in `.env.symphony.local` with the Linear `slugId` value.
-2. Set `SYMPHONY_MAX_CONCURRENT_AGENTS=1` for single-task processing (already defaulted in this repo).
-3. Verify statuses exist in your Linear team workflow:
+1. Bootstrap local env:
+
+```bash
+cp .env.symphony.local.example .env.symphony.local
+```
+
+2. Fill required values in `.env.symphony.local`:
+   - `LINEAR_API_KEY`
+   - `LINEAR_PROJECT_SLUG` (Linear `slugId`)
+3. Set `SYMPHONY_MAX_CONCURRENT_AGENTS=1` for single-task processing (already defaulted in this repo).
+4. Verify statuses exist in your Linear team workflow:
    - Active for Symphony polling: `Backlog`, `Todo`, `Ready for Dev`, `In Progress`, `In Review`
    - Terminal: `Done`, `Canceled`, `Duplicate`
-4. Install Symphony:
+5. Install Symphony:
 
 ```bash
 ./scripts/symphony/install.sh
@@ -38,6 +47,27 @@ To validate config without starting the daemon:
 
 ```bash
 SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh
+```
+
+## Reproducibility smoke checks
+
+Run guard regression tests:
+
+```bash
+./scripts/symphony/test-guards.sh
+```
+
+Run workflow/config validation with an isolated temp env file:
+
+```bash
+tmp_env="$(mktemp)"
+cat > "$tmp_env" <<'EOF'
+LINEAR_API_KEY=lin_api_smoke_test
+LINEAR_PROJECT_SLUG=smoke-test-project
+SYMPHONY_AI_ENGINE=codex
+EOF
+SYMPHONY_ENV_FILE="$tmp_env" SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh
+rm -f "$tmp_env"
 ```
 
 ## AI engine selection
