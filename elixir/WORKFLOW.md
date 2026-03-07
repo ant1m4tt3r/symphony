@@ -113,6 +113,93 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
 
+## Status transition gates
+
+Each status transition has gate criteria that **must** be satisfied before the
+move is allowed. The agent must verify every gate before calling
+`issueUpdate` to change state.
+
+### Valid transitions
+
+```
+Backlog ──► Todo          (human only)
+Todo ──► In Progress      (agent, on pickup)
+In Progress ──► Human Review  (agent, after PR validation)
+Human Review ──► Merging  (human only, after approval)
+Human Review ──► Rework   (human only, after requesting changes)
+Rework ──► In Progress    (agent, on rework start)
+Merging ──► Done          (agent, after PR merge via land skill)
+```
+
+### Gate: Todo → In Progress
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | Issue has `id`, `identifier`, `title`, and `state` | Query issue fields |
+| 2 | No non-terminal blockers exist | All `blockedBy` issues are in a terminal state |
+| 3 | Workpad bootstrap comment created or found | Search for `## Codex Workpad` marker |
+
+### Gate: In Progress → Human Review
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | A GitHub PR exists and is **open** (not closed/merged) | `gh pr view --json state` returns `OPEN` |
+| 2 | PR is **not** a draft | `gh pr view --json isDraft` returns `false` |
+| 3 | PR targets `main` | `gh pr view --json baseRefName` returns `main` |
+| 4 | PR is linked/attached to the Linear issue | Issue attachments or links contain the PR URL |
+| 5 | Branch has at least one commit for this issue | `git log origin/main..HEAD --oneline` is non-empty |
+| 6 | Acceptance criteria are met | Workpad checklist items checked |
+| 7 | Validation/tests pass on latest commit | `make -C elixir all` exits 0 |
+| 8 | PR feedback sweep is complete | No outstanding actionable comments remain |
+| 9 | PR checks are green | `gh pr checks` all pass |
+| 10 | PR has `symphony` label | `gh pr view --json labels` includes `symphony` |
+
+### Gate: Human Review → Rework
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | A human reviewer requested changes | Review state or explicit human comment |
+
+*This transition is human-initiated only; the agent does not move issues to Rework.*
+
+### Gate: Rework → In Progress
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | Existing PR is closed | `gh pr close` the current PR |
+| 2 | Previous workpad comment removed | Delete the old `## Codex Workpad` comment |
+| 3 | Fresh branch created from `origin/main` | `git checkout -b <new-branch> origin/main` |
+
+### Gate: Human Review → Merging
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | Human has approved the PR | PR review state is `APPROVED` |
+
+*This transition is human-initiated only.*
+
+### Gate: Merging → Done
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | The linked PR is **merged** | `gh pr view --json state` returns `MERGED` |
+| 2 | Land skill flow completed | `.codex/skills/land/SKILL.md` was followed |
+
+**The Done state requires a merged PR. An issue must never be moved to Done
+unless its linked GitHub PR has been merged.**
+
+### Prohibited transitions
+
+- **No direct move from In Progress to Done.** Work must pass through Human
+  Review and Merging first.
+- **No direct move from Todo to Human Review.** Implementation must happen in
+  In Progress first.
+- **No agent-initiated merge.** The agent must never call `gh pr merge` or
+  merge via API; merging is human-controlled via the Merging state and land
+  skill.
+- **No move to Human Review without a working PR.** If no PR exists, the issue
+  stays in In Progress.
+
 ## Step 0: Determine current ticket state and route
 
 1. Fetch the issue by explicit ticket ID.
