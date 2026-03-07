@@ -509,8 +509,6 @@ defmodule SymphonyElixir.Orchestrator do
     String.starts_with?(normalized_title, "[ongoing]")
   end
 
-  defp ongoing_issue?(_normalized_title), do: false
-
   defp issue_created_at_sort_key(%Issue{created_at: %DateTime{} = created_at}) do
     DateTime.to_unix(created_at, :microsecond)
   end
@@ -1093,11 +1091,9 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
-        agent_command:
-          pick_runtime_value(runtime_update.command, Map.get(running_entry, :agent_command)),
+        agent_command: pick_runtime_value(runtime_update.command, Map.get(running_entry, :agent_command)),
         agent_engine: pick_runtime_value(runtime_update.engine, Map.get(running_entry, :agent_engine)),
-        agent_provider:
-          pick_runtime_value(runtime_update.provider, Map.get(running_entry, :agent_provider)),
+        agent_provider: pick_runtime_value(runtime_update.provider, Map.get(running_entry, :agent_provider)),
         agent_model: pick_runtime_value(runtime_update.model, Map.get(running_entry, :agent_model))
       }),
       token_delta
@@ -1445,8 +1441,6 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp runtime_metadata_for_update(_update), do: %{}
-
   defp runtime_metadata_from_command(command) when is_binary(command) do
     trimmed = String.trim(command)
     model = extract_model_from_command(trimmed)
@@ -1551,6 +1545,8 @@ defmodule SymphonyElixir.Orchestrator do
     if trimmed == "", do: nil, else: trimmed
   end
 
+  defp runtime_string_value(nil), do: nil
+
   defp runtime_string_value(value) when is_atom(value) do
     value
     |> Atom.to_string()
@@ -1575,37 +1571,33 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp extract_model_from_command(_command), do: nil
-
   defp engine_from_command(command, model) when is_binary(command) do
     normalized = String.downcase(command)
+    detect_engine(normalized) || if(is_binary(model), do: "custom")
+  end
 
+  defp detect_engine(normalized) do
     cond do
-      String.contains?(normalized, "opencode_app_server.py") or
-          String.contains?(normalized, "opencode run") ->
-        "opencode"
-
-      String.contains?(normalized, "claude_app_server.py") or String.contains?(normalized, "claude ") ->
-        "claude"
-
-      String.contains?(normalized, "agent_router.sh") ->
-        "mixed"
-
-      String.contains?(normalized, " codex ") or
-          String.starts_with?(normalized, "codex ") or
-          String.contains?(normalized, "/codex") ->
-        "codex"
-
-      is_binary(model) ->
-        "custom"
-
-      true ->
-        nil
+      opencode_command?(normalized) -> "opencode"
+      claude_command?(normalized) -> "claude"
+      String.contains?(normalized, "agent_router.sh") -> "mixed"
+      codex_command?(normalized) -> "codex"
+      true -> nil
     end
   end
 
-  defp engine_from_command(_command, model) when is_binary(model), do: "custom"
-  defp engine_from_command(_command, _model), do: nil
+  defp opencode_command?(cmd) do
+    String.contains?(cmd, "opencode_app_server.py") or String.contains?(cmd, "opencode run")
+  end
+
+  defp claude_command?(cmd) do
+    String.contains?(cmd, "claude_app_server.py") or String.contains?(cmd, "claude ")
+  end
+
+  defp codex_command?(cmd) do
+    String.contains?(cmd, " codex ") or String.starts_with?(cmd, "codex ") or
+      String.contains?(cmd, "/codex")
+  end
 
   defp normalize_engine_value(value) when is_binary(value) do
     value
