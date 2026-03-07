@@ -13,6 +13,7 @@ defmodule SymphonyElixirWeb.Presenter do
       %{} = snapshot ->
         %{
           generated_at: generated_at,
+          agent_engine: Config.agent_engine(),
           counts: %{
             running: length(snapshot.running),
             retrying: length(snapshot.retrying)
