@@ -329,12 +329,82 @@ Use this only when completion is blocked by missing required tools or missing au
 
 ## Step 3: Human Review and merge handling
 
+### In Review Pass Monitoring
+
+When the issue is in `Human Review` (In Review in Linear), run this explicit checklist at the **start of each pass** before deciding there is no action:
+
+#### Explicit Checklist for Each Review Pass
+
+1. **Fetch CI Status**
+   - Run: `gh pr checks <pr-number>`
+   - Verify: All required CI checks are passing (green)
+   - If CI fails: Investigate failure, implement fix, push update, stay in `Human Review`
+
+2. **Fetch PR Top-Level Comments**
+   - Run: `gh pr view <pr-number> --comments`
+   - Review: Read all new comments since last pass
+   - Action: Address each actionable human comment
+
+3. **Fetch PR Inline Review Comments**
+   - Run: `gh api repos/<owner>/<repo>/pulls/<pr-number>/comments`
+   - Review: Read all inline review comments (both resolved and unresolved)
+   - Action: Address each actionable comment or provide justified pushback
+
+4. **Fetch PR Review Summaries**
+   - Run: `gh pr view <pr-number> --json reviews`
+   - Review: Check for approved/pending/changes_requested states
+   - Action: If changes requested, move to `Rework`
+
+5. **Fetch Linear Issue Comments**
+   - Run: Query Linear issue comments via `linear_graphql`
+   - Review: Read all new human comments on the issue
+   - Action: Treat human comments as actionable steering
+
+6. **Fetch PR Conversation Threads**
+   - Run: `gh api repos/<owner>/<repo>/pulls/<pr-number>/conversation`
+   - Review: Read all conversation threads
+   - Action: Address pending discussions
+
+#### Failure/Suggestion Handling
+
+**CI Failures:**
+- Investigate the root cause of each failing check
+- Implement the required fix in code
+- Push the update and re-run CI
+- Stay in `Human Review` until all checks pass
+
+**PR Comments/Suggestions:**
+- Treat every human reviewer comment as actionable input
+- If the suggestion makes sense for scope/quality: implement the change
+- If the suggestion should not be applied: reply on the PR with a concise technical reason
+- Update the workpad with each feedback item and resolution status
+
+**Linear Issue Comments:**
+- Treat human comments as actionable steering
+- Comments prefixed with `[symphony]` (especially from PR author/assignee) are explicit directives
+- Implement requested changes or respond with technical justification
+
+**Automated Bot Comments:**
+- Ignore clearly automated bot comments except:
+  - When they report failing CI checks that require action
+  - When they report security vulnerabilities
+  - When they report breaking changes
+
+**State Transitions Based on Review:**
+- If CI fails: Stay in `Human Review`, fix and push
+- If changes requested via review: Move to `Rework`
+- If approved and PR merged: Move to `Done`
+- If PR merged by human: Move to `Done`
+
+### Human Review Workflow
+
 1. When the issue is in `Human Review`, do not code or change ticket content.
-2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
-3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
-4. If approved, human moves the issue to `Merging`.
-5. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-6. After merge is complete, move the issue to `Done`.
+2. At the start of each pass, run the explicit checklist above.
+3. Poll for updates as needed, including GitHub PR review comments from humans and bots.
+4. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
+5. If approved, human moves the issue to `Merging`.
+6. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
+7. After merge is complete, move the issue to `Done`.
 
 ## Step 4: Rework handling
 
