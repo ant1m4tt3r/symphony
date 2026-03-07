@@ -109,6 +109,69 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Active work</h2>
+              <p class="section-copy">Task cards for issues currently being worked on.</p>
+            </div>
+          </div>
+
+          <%= if @payload.running == [] do %>
+            <p class="empty-state">No active tasks.</p>
+          <% else %>
+            <div class="task-card-grid">
+              <article :for={entry <- @payload.running} class="task-card">
+                <div class="task-card-header">
+                  <div class="task-card-id-row">
+                    <span class="task-card-id"><%= entry.issue_identifier %></span>
+                    <span class={state_badge_class(entry.state)}>
+                      <%= entry.state %>
+                    </span>
+                  </div>
+                  <%= if entry[:priority] do %>
+                    <span class={"task-card-priority #{priority_class(entry.priority)}"}>
+                      <%= priority_label(entry.priority) %>
+                    </span>
+                  <% end %>
+                </div>
+
+                <h3 class="task-card-title"><%= entry[:title] || entry.issue_identifier %></h3>
+
+                <div class="task-card-meta">
+                  <%= if entry[:assignee_id] do %>
+                    <span class="task-card-meta-item">
+                      <span class="task-card-meta-label">Assignee</span>
+                      <span class="task-card-meta-value mono"><%= truncate_id(entry.assignee_id) %></span>
+                    </span>
+                  <% end %>
+                  <span class="task-card-meta-item">
+                    <span class="task-card-meta-label">Updated</span>
+                    <span class="task-card-meta-value mono"><%= format_relative_time(entry[:updated_at] || entry[:started_at], @now) %></span>
+                  </span>
+                  <span class="task-card-meta-item">
+                    <span class="task-card-meta-label">Runtime</span>
+                    <span class="task-card-meta-value numeric"><%= format_runtime_seconds(runtime_seconds_from_started_at(entry.started_at, @now)) %></span>
+                  </span>
+                </div>
+
+                <div class="task-card-links">
+                  <%= if entry[:url] do %>
+                    <a class="task-card-link" href={entry.url} target="_blank" rel="noopener">
+                      Linear
+                    </a>
+                  <% end %>
+                  <%= if entry[:branch_name] do %>
+                    <a class="task-card-link task-card-link-secondary" href={"https://github.com/search?q=#{entry.branch_name}&type=pullrequests"} target="_blank" rel="noopener">
+                      PR
+                    </a>
+                  <% end %>
+                </div>
+              </article>
+            </div>
+          <% end %>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Rate limits</h2>
               <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
             </div>
@@ -308,6 +371,49 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp format_int(_value), do: "n/a"
+
+  defp priority_label(0), do: "No priority"
+  defp priority_label(1), do: "Urgent"
+  defp priority_label(2), do: "High"
+  defp priority_label(3), do: "Medium"
+  defp priority_label(4), do: "Low"
+  defp priority_label(_), do: "Unknown"
+
+  defp priority_class(1), do: "priority-urgent"
+  defp priority_class(2), do: "priority-high"
+  defp priority_class(3), do: "priority-medium"
+  defp priority_class(4), do: "priority-low"
+  defp priority_class(_), do: ""
+
+  defp truncate_id(id) when is_binary(id) do
+    if String.length(id) > 12 do
+      String.slice(id, 0, 8) <> "..."
+    else
+      id
+    end
+  end
+
+  defp truncate_id(id), do: to_string(id)
+
+  defp format_relative_time(nil, _now), do: "n/a"
+
+  defp format_relative_time(time, now) when is_binary(time) do
+    case DateTime.from_iso8601(time) do
+      {:ok, parsed, _offset} -> format_relative_time(parsed, now)
+      _ -> "n/a"
+    end
+  end
+
+  defp format_relative_time(%DateTime{} = time, %DateTime{} = now) do
+    diff = DateTime.diff(now, time, :second)
+
+    cond do
+      diff < 60 -> "just now"
+      diff < 3_600 -> "#{div(diff, 60)}m ago"
+      diff < 86_400 -> "#{div(diff, 3_600)}h ago"
+      true -> "#{div(diff, 86_400)}d ago"
+    end
+  end
 
   defp state_badge_class(state) do
     base = "state-badge"

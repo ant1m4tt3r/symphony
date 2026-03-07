@@ -98,7 +98,13 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
+      title: Map.get(entry, :title),
       state: entry.state,
+      priority: Map.get(entry, :priority),
+      url: Map.get(entry, :url),
+      assignee_id: Map.get(entry, :assignee_id),
+      updated_at: iso8601(Map.get(entry, :updated_at)),
+      branch_name: Map.get(entry, :branch_name),
       session_id: entry.session_id,
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
