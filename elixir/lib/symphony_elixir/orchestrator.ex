@@ -925,7 +925,13 @@ defmodule SymphonyElixir.Orchestrator do
         %{
           issue_id: issue_id,
           identifier: metadata.identifier,
+          title: metadata.issue.title,
           state: metadata.issue.state,
+          priority: metadata.issue.priority,
+          url: metadata.issue.url,
+          assignee_id: metadata.issue.assignee_id,
+          updated_at: metadata.issue.updated_at,
+          branch_name: metadata.issue.branch_name,
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,

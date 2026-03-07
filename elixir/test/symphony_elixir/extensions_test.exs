@@ -347,7 +347,13 @@ defmodule SymphonyElixir.ExtensionsTest do
                %{
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
+                 "title" => nil,
                  "state" => "In Progress",
+                 "priority" => nil,
+                 "url" => nil,
+                 "assignee_id" => nil,
+                 "updated_at" => nil,
+                 "branch_name" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
                  "last_event" => "notification",
