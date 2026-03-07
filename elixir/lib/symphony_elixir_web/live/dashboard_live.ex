@@ -141,7 +141,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 <thead>
                   <tr>
                     <th>Issue</th>
+                    <th>Priority</th>
                     <th>State</th>
+                    <th>Assignee</th>
                     <th>Session</th>
                     <th>Runtime / turns</th>
                     <th>Codex update</th>
@@ -153,13 +155,23 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                        <a class="issue-link" href={entry.url || "#"} target="_blank" rel="noopener">Linear</a>
+                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON</a>
+                        <span :if={entry.branch_name} class="branch-name"><%= entry.branch_name %></span>
                       </div>
+                    </td>
+                    <td>
+                      <span class={priority_badge_class(entry.priority)}>
+                        <%= priority_label(entry.priority) %>
+                      </span>
                     </td>
                     <td>
                       <span class={state_badge_class(entry.state)}>
                         <%= entry.state %>
                       </span>
+                    </td>
+                    <td>
+                      <span class="assignee-name"><%= entry.assignee || "Unassigned" %></span>
                     </td>
                     <td>
                       <div class="session-stack">
@@ -272,7 +284,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
       end)
   end
 
-  defp format_runtime_and_turns(started_at, turn_count, now) when is_integer(turn_count) and turn_count > 0 do
+  defp format_runtime_and_turns(started_at, turn_count, now)
+       when is_integer(turn_count) and turn_count > 0 do
     "#{format_runtime_seconds(runtime_seconds_from_started_at(started_at, now))} / #{turn_count}"
   end
 
@@ -290,7 +303,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
     DateTime.diff(now, started_at, :second)
   end
 
-  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now) when is_binary(started_at) do
+  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now)
+       when is_binary(started_at) do
     case DateTime.from_iso8601(started_at) do
       {:ok, parsed, _offset} -> runtime_seconds_from_started_at(parsed, now)
       _ -> 0
@@ -314,12 +328,43 @@ defmodule SymphonyElixirWeb.DashboardLive do
     normalized = state |> to_string() |> String.downcase()
 
     cond do
-      String.contains?(normalized, ["progress", "running", "active"]) -> "#{base} state-badge-active"
-      String.contains?(normalized, ["blocked", "error", "failed"]) -> "#{base} state-badge-danger"
-      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
-      true -> base
+      String.contains?(normalized, ["progress", "running", "active"]) ->
+        "#{base} state-badge-active"
+
+      String.contains?(normalized, ["blocked", "error", "failed"]) ->
+        "#{base} state-badge-danger"
+
+      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) ->
+        "#{base} state-badge-warning"
+
+      true ->
+        base
     end
   end
+
+  defp priority_badge_class(priority) when is_integer(priority) and priority in 1..4 do
+    case priority do
+      1 -> "priority-badge priority-badge-urgent"
+      2 -> "priority-badge priority-badge-high"
+      3 -> "priority-badge priority-badge-medium"
+      4 -> "priority-badge priority-badge-low"
+      _ -> "priority-badge"
+    end
+  end
+
+  defp priority_badge_class(_priority), do: "priority-badge priority-badge-none"
+
+  defp priority_label(priority) when is_integer(priority) and priority in 1..4 do
+    case priority do
+      1 -> "Urgent"
+      2 -> "High"
+      3 -> "Medium"
+      4 -> "Low"
+      _ -> to_string(priority)
+    end
+  end
+
+  defp priority_label(_priority), do: "None"
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
