@@ -6,6 +6,7 @@ This fork includes a local harness to run Symphony from this repository (`/Users
 
 - `scripts/symphony/install.sh`: build Symphony runtime from this fork.
 - `scripts/symphony/start.sh`: render workflow + start Symphony + dashboard.
+- `scripts/symphony/preflight.sh`: one-command readiness check for env/project/workflow.
 - `scripts/symphony/list-projects.sh`: list available Linear project slugs.
 - `scripts/symphony/bin/claude_app_server.py`: Claude Code CLI shim that speaks Symphony's expected app-server protocol.
 - `.symphony/WORKFLOW.template.md`: template used to render the runtime workflow.
@@ -25,6 +26,31 @@ This fork includes a local harness to run Symphony from this repository (`/Users
 ```
 
 ## Run
+
+Before starting Symphony, run the readiness preflight:
+
+```bash
+./scripts/symphony/preflight.sh
+```
+
+Expected successful output:
+
+```text
+[preflight] Symphony harness readiness check
+[preflight] env_file=/path/to/repo/.env.symphony.local
+[check] Required environment keys
+  [ok] LINEAR_API_KEY is set
+  [ok] LINEAR_PROJECT_SLUG is set
+[check] Linear project reachability
+  [ok] project reachable: <project-name> (<project-slug>, state=<state>)
+[check] Workflow validation
+  [ok] Workflow config valid
+[ready] Symphony harness preflight passed
+```
+
+Any failed check exits non-zero and prints a `[fail] ...` line with the reason.
+
+Then start Symphony:
 
 ```bash
 ./scripts/symphony/start.sh
