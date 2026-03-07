@@ -344,8 +344,11 @@ defmodule SymphonyElixir.StatusDashboard do
         running_to_backoff_spacer = if(running == [], do: [], else: ["│"])
         backoff_rows = format_retry_rows(retrying)
 
+        engine = Config.agent_engine()
+
         ([
            colorize("╭─ SYMPHONY STATUS", @ansi_bold),
+           colorize("│ Engine: ", @ansi_bold) <> colorize(engine, @ansi_cyan),
            colorize("│ Agents: ", @ansi_bold) <>
              colorize("#{agent_count}", @ansi_green) <>
              colorize("/", @ansi_gray) <>

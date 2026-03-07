@@ -746,7 +746,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.server_port() == nil
     assert Config.server_host() == "123"
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "")
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_approval_policy: "")
 
     assert Config.codex_approval_policy() == %{
              "reject" => %{
@@ -758,11 +758,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:error, {:invalid_codex_approval_policy, ""}} = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: "")
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_thread_sandbox: "")
     assert Config.codex_thread_sandbox() == "workspace-write"
     assert {:error, {:invalid_codex_thread_sandbox, ""}} = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_turn_sandbox_policy: "bad")
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_turn_sandbox_policy: "bad")
 
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "workspaceWrite",
@@ -777,6 +777,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      agent_engine: "codex",
       codex_approval_policy: "future-policy",
       codex_thread_sandbox: "future-sandbox",
       codex_turn_sandbox_policy: %{
@@ -797,6 +798,44 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
     assert Config.codex_command() == "codex app-server"
+  end
+
+  test "agent.engine defaults to claude and supports codex" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    assert Config.agent_engine() == "claude"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex")
+    assert Config.agent_engine() == "codex"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "Claude")
+    assert Config.agent_engine() == "claude"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "CODEX")
+    assert Config.agent_engine() == "codex"
+  end
+
+  test "validate! rejects unsupported agent engines" do
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "unsupported")
+    assert {:error, {:unsupported_agent_engine, "unsupported"}} = Config.validate!()
+  end
+
+  test "validate! skips codex validation when engine is claude" do
+    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: 123)
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: 123)
+    assert :ok = Config.validate!()
+  end
+
+  test "validate! runs codex validation when engine is codex" do
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_approval_policy: 123)
+    assert {:error, {:invalid_codex_approval_policy, 123}} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_thread_sandbox: 123)
+    assert {:error, {:invalid_codex_thread_sandbox, 123}} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex")
+    assert :ok = Config.validate!()
   end
 
   test "config resolves $VAR references for env-backed secret and path values" do

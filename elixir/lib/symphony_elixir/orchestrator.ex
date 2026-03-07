@@ -59,6 +59,7 @@ defmodule SymphonyElixir.Orchestrator do
       codex_rate_limits: nil
     }
 
+    Logger.info("Orchestrator starting with agent.engine=#{Config.agent_engine()}")
     run_terminal_workspace_cleanup()
     :ok = schedule_tick(0)
 
@@ -194,6 +195,10 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, {:unsupported_tracker_kind, kind}} ->
         Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
 
+        state
+
+      {:error, {:unsupported_agent_engine, engine}} ->
+        Logger.error("Unsupported agent.engine in WORKFLOW.md: #{inspect(engine)}")
         state
 
       {:error, :missing_codex_command} ->
