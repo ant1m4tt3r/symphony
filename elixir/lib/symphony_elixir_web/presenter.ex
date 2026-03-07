@@ -112,10 +112,10 @@ defmodule SymphonyElixirWeb.Presenter do
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
       agent: %{
-        command: entry.agent_command,
-        engine: entry.agent_engine,
-        provider: entry.agent_provider,
-        model: entry.agent_model
+        command: Map.get(entry, :agent_command),
+        engine: Map.get(entry, :agent_engine),
+        provider: Map.get(entry, :agent_provider),
+        model: Map.get(entry, :agent_model)
       },
       tokens: %{
         input_tokens: entry.codex_input_tokens,
@@ -145,10 +145,10 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(running.last_codex_message),
       last_event_at: iso8601(running.last_codex_timestamp),
       agent: %{
-        command: running.agent_command,
-        engine: running.agent_engine,
-        provider: running.agent_provider,
-        model: running.agent_model
+        command: Map.get(running, :agent_command),
+        engine: Map.get(running, :agent_engine),
+        provider: Map.get(running, :agent_provider),
+        model: Map.get(running, :agent_model)
       },
       tokens: %{
         input_tokens: running.codex_input_tokens,
