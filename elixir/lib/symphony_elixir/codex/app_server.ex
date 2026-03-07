@@ -993,8 +993,6 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> normalize_approval_payload_command()
   end
 
-  defp approval_payload_command(_payload), do: nil
-
   defp fallback_approval_payload_command(nil, params) do
     Map.get(params, "command") || Map.get(params, "cmd") || Map.get(params, "argv") || Map.get(params, "args")
   end
