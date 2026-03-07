@@ -111,7 +111,7 @@ normalize_engine() {
   printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
 }
 
-ROUTER_MAP_RAW="${SYMPHONY_AGENT_ROUTER_MAP:-codex:1,opencode:1}"
+ROUTER_MAP_RAW="${SYMPHONY_AGENT_ROUTER_MAP:-claude:6,codex:1,opencode:1}"
 FALLBACK_ENGINE="$(normalize_engine "${SYMPHONY_AGENT_ROUTER_FALLBACK:-codex}")"
 
 declare -a ENGINES=()

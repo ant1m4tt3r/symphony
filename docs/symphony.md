@@ -1,6 +1,7 @@
 # Symphony Fork Harness
 
-This fork includes a local harness to run Symphony from this repository (`/Users/antimatter/Dev/repos/symphony`) with dashboard + Linear tracker.
+This fork includes a local harness to run Symphony from this repository with
+dashboard + Linear tracker.
 
 ## Files
 
@@ -14,12 +15,20 @@ This fork includes a local harness to run Symphony from this repository (`/Users
 
 ## First-time setup
 
-1. Fill `LINEAR_PROJECT_SLUG` in `.env.symphony.local` with the Linear `slugId` value.
-2. Set `SYMPHONY_MAX_CONCURRENT_AGENTS=1` for single-task processing (already defaulted in this repo).
-3. Verify statuses exist in your Linear team workflow:
+1. Bootstrap local env:
+
+```bash
+cp .env.symphony.local.example .env.symphony.local
+```
+
+2. Fill required values in `.env.symphony.local`:
+   - `LINEAR_API_KEY`
+   - `LINEAR_PROJECT_SLUG` (Linear `slugId`)
+3. Set `SYMPHONY_MAX_CONCURRENT_AGENTS=1` for single-task processing (already defaulted in this repo).
+4. Verify statuses exist in your Linear team workflow:
    - Active for Symphony polling: `Backlog`, `Todo`, `Ready for Dev`, `In Progress`, `In Review`
    - Terminal: `Done`, `Canceled`, `Duplicate`
-4. Install Symphony:
+5. Install Symphony:
 
 ```bash
 ./scripts/symphony/install.sh
@@ -66,6 +75,27 @@ To validate config without starting the daemon:
 SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh
 ```
 
+## Reproducibility smoke checks
+
+Run guard regression tests:
+
+```bash
+./scripts/symphony/test-guards.sh
+```
+
+Run workflow/config validation with an isolated temp env file:
+
+```bash
+tmp_env="$(mktemp)"
+cat > "$tmp_env" <<'EOF'
+LINEAR_API_KEY=lin_api_smoke_test
+LINEAR_PROJECT_SLUG=smoke-test-project
+SYMPHONY_AI_ENGINE=codex
+EOF
+SYMPHONY_ENV_FILE="$tmp_env" SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh
+rm -f "$tmp_env"
+```
+
 ## AI engine selection
 
 Default engine is `claude`.
@@ -96,7 +126,7 @@ Distribute agents across Codex and OpenCode:
 
 ```bash
 SYMPHONY_AI_ENGINE=mixed \
-SYMPHONY_AGENT_ROUTER_MAP=codex:3,opencode:2 \
+SYMPHONY_AGENT_ROUTER_MAP=claude:6,codex:1,opencode:1 \
 ./scripts/symphony/start.sh
 ```
 
@@ -111,7 +141,7 @@ Engine env vars:
 - `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls; default is blocked.
   - This also enables `codex.allow_unsafe_merge_push: true` in generated workflow so app-server approval guardrails do not block merge commands.
 - Mixed routing options:
-  - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (example `codex:3,opencode:2`).
+  - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (default `claude:6,codex:1,opencode:1`; example `claude:6,codex:1,opencode:1`).
   - `SYMPHONY_AGENT_ROUTER_FALLBACK`: fallback engine when selected engine is unavailable (default `codex`).
   - `SYMPHONY_ROUTER_CODEX_COMMAND`: optional Codex command override for router mode.
   - `SYMPHONY_ROUTER_OPENCODE_COMMAND`: optional OpenCode command override for router mode.

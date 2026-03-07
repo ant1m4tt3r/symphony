@@ -38,6 +38,12 @@ output.
 > Set up Symphony for my repository based on
 > https://github.com/openai/symphony/blob/main/elixir/README.md
 
+### Fork harness runbook
+
+For this fork's production harness setup (install/start scripts, workflow
+template, tracker state policy, and guardrails), see
+[docs/symphony.md](docs/symphony.md).
+
 ---
 
 ## License
