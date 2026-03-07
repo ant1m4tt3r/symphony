@@ -543,6 +543,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Runtime"
     assert html =~ "Live"
     assert html =~ "Offline"
+    assert html =~ "Active work"
+    assert html =~ "No priority"
+    assert html =~ "Unassigned"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     refute html =~ "data-runtime-clock="
@@ -557,7 +560,13 @@ defmodule SymphonyElixir.ExtensionsTest do
         %{
           issue_id: "issue-http",
           identifier: "MT-HTTP",
+          title: "Build dashboard task cards",
           state: "In Progress",
+          priority: 2,
+          url: "https://linear.app/ant1m4tt3r/issue/MT-HTTP/build-dashboard-task-cards",
+          assignee_id: "user-0123456789abcdef",
+          updated_at: DateTime.add(DateTime.utc_now(), -120, :second),
+          branch_name: "hug-21-dashboard-task-cards",
           session_id: "thread-http",
           turn_count: 8,
           last_codex_event: :notification,
@@ -589,7 +598,13 @@ defmodule SymphonyElixir.ExtensionsTest do
     StatusDashboard.notify_update()
 
     assert_eventually(fn ->
-      render(view) =~ "agent message content streaming: structured update"
+      html = render(view)
+
+      html =~ "agent message content streaming: structured update" and
+        html =~ "Build dashboard task cards" and
+        html =~ "High" and
+        html =~ "Linear" and
+        html =~ "github.com/search?q=hug-21-dashboard-task-cards&amp;type=pullrequests"
     end)
   end
 
