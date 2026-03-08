@@ -54,3 +54,14 @@
 - `make -C elixir all`
   - Result: passed (`fmt-check`, `lint`, `mix test --cover` with 221 tests, `dialyzer` success).
   - Note: first run reported one dialyzer warning (`pattern_match_cov`) in `runtime_health_label/1`; removed unreachable fallback clause and reran successfully.
+
+## PR
+- URL: https://github.com/ant1m4tt3r/symphony/pull/21
+- State: OPEN, non-draft, base `main`
+- Checks: `make-all` SUCCESS
+- Mergeability: `CLEAN`
+- Review/comments snapshot: no PR conversation comments or review comments at time of check.
+
+## Tracker Follow-up
+- Attempted to move issue `HUG-35` to `In Review` via Linear MCP: `Entity not found` (workspace/token mismatch).
+- Attempted issue lookup by identifier and issue update APIs; `HUG-35` is unavailable in configured Linear workspace, so state/comment updates are currently blocked from this environment.
