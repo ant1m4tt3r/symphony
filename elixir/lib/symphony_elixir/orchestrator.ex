@@ -34,6 +34,7 @@ defmodule SymphonyElixir.Orchestrator do
       running: %{},
       completed: MapSet.new(),
       claimed: MapSet.new(),
+      agent_overrides: %{},
       retry_attempts: %{},
       codex_totals: nil,
       codex_rate_limits: nil
@@ -55,6 +56,7 @@ defmodule SymphonyElixir.Orchestrator do
       max_concurrent_agents: Config.max_concurrent_agents(),
       next_poll_due_at_ms: now_ms,
       poll_check_in_progress: false,
+      agent_overrides: %{},
       codex_totals: @empty_codex_totals,
       codex_rate_limits: nil
     }
@@ -292,6 +294,16 @@ defmodule SymphonyElixir.Orchestrator do
     sort_issues_for_dispatch(issues)
   end
 
+  @doc false
+  @spec effective_agent_for_dispatch_for_test(String.t() | nil, term()) :: String.t()
+  def effective_agent_for_dispatch_for_test(issue_id, %State{} = state) do
+    effective_agent_for_issue(state, issue_id)
+  end
+
+  def effective_agent_for_dispatch_for_test(issue_id, state) do
+    effective_agent_for_issue(state, issue_id)
+  end
+
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
 
   defp reconcile_running_issue_states([issue | rest], state, active_states, terminal_states) do
@@ -361,6 +373,7 @@ defmodule SymphonyElixir.Orchestrator do
           state
           | running: Map.delete(state.running, issue_id),
             claimed: MapSet.delete(state.claimed, issue_id),
+            agent_overrides: Map.delete(state.agent_overrides, issue_id),
             retry_attempts: Map.delete(state.retry_attempts, issue_id)
         }
 
@@ -656,15 +669,19 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp do_dispatch_issue(%State{} = state, issue, attempt) do
     recipient = self()
+    issue_id = issue.id
+    agent_override = issue_agent_override(state, issue_id)
+    dispatch_agent_engine = effective_agent_for_issue(state, issue_id)
+    agent_source = if is_binary(agent_override), do: "task-card-override", else: "global-default"
     runtime_defaults = runtime_metadata_from_command(Config.codex_command())
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt)
+           AgentRunner.run(issue, recipient, attempt: attempt, agent_engine: dispatch_agent_engine)
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)}")
+        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} agent_engine=#{dispatch_agent_engine} source=#{agent_source}")
 
         running =
           Map.put(state.running, issue.id, %{
@@ -689,8 +706,12 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_output_tokens: 0,
             codex_last_reported_total_tokens: 0,
             agent_command: Map.get(runtime_defaults, :command),
-            agent_engine: Map.get(runtime_defaults, :engine),
-            agent_provider: Map.get(runtime_defaults, :provider),
+            agent_engine: dispatch_agent_engine,
+            agent_provider:
+              pick_runtime_value(
+                Map.get(runtime_defaults, :provider),
+                provider_from_engine(dispatch_agent_engine)
+              ),
             agent_model: Map.get(runtime_defaults, :model),
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
@@ -891,7 +912,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp release_issue_claim(%State{} = state, issue_id) do
-    %{state | claimed: MapSet.delete(state.claimed, issue_id)}
+    %{
+      state
+      | claimed: MapSet.delete(state.claimed, issue_id),
+        agent_overrides: Map.delete(state.agent_overrides, issue_id)
+    }
   end
 
   defp retry_delay(attempt, metadata) when is_integer(attempt) and attempt > 0 and is_map(metadata) do
@@ -952,6 +977,41 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp running_entry_session_id(_running_entry), do: "n/a"
 
+  defp valid_issue_id?(issue_id) when is_binary(issue_id) do
+    String.trim(issue_id) != ""
+  end
+
+  defp valid_issue_id?(_issue_id), do: false
+
+  defp normalize_agent_override(nil), do: {:ok, nil}
+
+  defp normalize_agent_override(agent_override) when is_binary(agent_override) do
+    normalized = agent_override |> String.trim() |> String.downcase()
+
+    cond do
+      normalized in ["", "global"] ->
+        {:ok, nil}
+
+      normalized in Config.supported_agent_engines() ->
+        {:ok, normalized}
+
+      true ->
+        {:error, {:unsupported_agent_engine, normalized}}
+    end
+  end
+
+  defp normalize_agent_override(_agent_override), do: {:error, :invalid_agent_override}
+
+  defp issue_agent_override(%State{} = state, issue_id) when is_binary(issue_id) do
+    Map.get(state.agent_overrides, issue_id)
+  end
+
+  defp issue_agent_override(_state, _issue_id), do: nil
+
+  defp effective_agent_for_issue(state, issue_id) do
+    issue_agent_override(state, issue_id) || Config.agent_engine()
+  end
+
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
@@ -961,6 +1021,22 @@ defmodule SymphonyElixir.Orchestrator do
       (state.max_concurrent_agents || Config.max_concurrent_agents()) - map_size(state.running),
       0
     )
+  end
+
+  @spec set_issue_agent_override(String.t(), String.t() | nil) ::
+          :ok | {:error, term()} | :unavailable
+  def set_issue_agent_override(issue_id, agent_override) do
+    set_issue_agent_override(__MODULE__, issue_id, agent_override)
+  end
+
+  @spec set_issue_agent_override(GenServer.server(), String.t(), String.t() | nil) ::
+          :ok | {:error, term()} | :unavailable
+  def set_issue_agent_override(server, issue_id, agent_override) do
+    if Process.whereis(server) do
+      GenServer.call(server, {:set_issue_agent_override, issue_id, agent_override})
+    else
+      :unavailable
+    end
   end
 
   @spec request_refresh() :: map() | :unavailable
@@ -995,6 +1071,25 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
+  def handle_call({:set_issue_agent_override, issue_id, agent_override}, _from, state) do
+    with true <- valid_issue_id?(issue_id),
+         {:ok, normalized_override} <- normalize_agent_override(agent_override) do
+      updated_overrides =
+        case normalized_override do
+          nil -> Map.delete(state.agent_overrides, issue_id)
+          engine -> Map.put(state.agent_overrides, issue_id, engine)
+        end
+
+      updated_state = %{state | agent_overrides: updated_overrides}
+      notify_dashboard()
+      {:reply, :ok, updated_state}
+    else
+      false -> {:reply, {:error, :invalid_issue_id}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call(:snapshot, _from, state) do
     state = refresh_runtime_config(state)
     now = DateTime.utc_now()
@@ -1003,6 +1098,10 @@ defmodule SymphonyElixir.Orchestrator do
     running =
       state.running
       |> Enum.map(fn {issue_id, metadata} ->
+        agent_override = issue_agent_override(state, issue_id)
+        effective_agent = effective_agent_for_issue(state, issue_id)
+        runtime_agent = pick_runtime_value(Map.get(metadata, :agent_engine), effective_agent)
+
         %{
           issue_id: issue_id,
           identifier: metadata.identifier,
@@ -1013,6 +1112,8 @@ defmodule SymphonyElixir.Orchestrator do
           assignee_id: metadata.issue.assignee_id,
           updated_at: metadata.issue.updated_at,
           branch_name: metadata.issue.branch_name,
+          agent_override: agent_override,
+          effective_agent: effective_agent,
           session_id: metadata.session_id,
           requested_runtime: Map.get(metadata, :requested_runtime),
           requested_runtime_source: Map.get(metadata, :requested_runtime_source),
@@ -1029,7 +1130,7 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
           agent_command: Map.get(metadata, :agent_command),
-          agent_engine: Map.get(metadata, :agent_engine),
+          agent_engine: runtime_agent,
           agent_provider: Map.get(metadata, :agent_provider),
           agent_model: Map.get(metadata, :agent_model),
           runtime_seconds: running_seconds(metadata.started_at, now)

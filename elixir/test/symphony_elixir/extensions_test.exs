@@ -356,6 +356,9 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "assignee_id" => nil,
                  "updated_at" => nil,
                  "branch_name" => nil,
+                 "agent_engine" => "opencode",
+                 "agent_override" => nil,
+                 "effective_agent" => "claude",
                  "session_id" => "thread-http",
                  "runtime" => %{
                    "requested" => nil,
@@ -576,6 +579,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Active work"
     assert html =~ "No priority"
     assert html =~ "Unassigned"
+    assert html =~ "Card override"
+    assert html =~ "Using global Claude"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     refute html =~ "data-runtime-clock="
@@ -597,6 +602,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           assignee_id: "user-0123456789abcdef",
           updated_at: DateTime.add(DateTime.utc_now(), -120, :second),
           branch_name: "hug-21-dashboard-task-cards",
+          agent_engine: "claude",
+          agent_override: "codex",
+          effective_agent: "codex",
           session_id: "thread-http",
           turn_count: 8,
           last_codex_event: :notification,
@@ -633,6 +641,9 @@ defmodule SymphonyElixir.ExtensionsTest do
       html =~ "agent message content streaming: structured update" and
         html =~ "Build dashboard task cards" and
         html =~ "High" and
+        html =~ "Card override" and
+        html =~ "Current run:" and
+        html =~ "Next dispatch:" and
         html =~ "Linear" and
         html =~ "github.com/search?q=hug-21-dashboard-task-cards&amp;type=pullrequests"
     end)
