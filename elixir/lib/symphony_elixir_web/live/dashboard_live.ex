@@ -444,6 +444,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
     end
   end
 
+  defp display_or_na(nil), do: "n/a"
+
   defp display_or_na(value) when is_binary(value) do
     trimmed = String.trim(value)
     if trimmed == "", do: "n/a", else: trimmed
