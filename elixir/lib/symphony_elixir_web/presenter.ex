@@ -25,15 +25,23 @@ defmodule SymphonyElixirWeb.Presenter do
         }
 
       :timeout ->
-        %{generated_at: generated_at, error: %{code: "snapshot_timeout", message: "Snapshot timed out"}}
+        %{
+          generated_at: generated_at,
+          error: %{code: "snapshot_timeout", message: "Snapshot timed out"}
+        }
 
       :unavailable ->
-        %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
+        %{
+          generated_at: generated_at,
+          error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}
+        }
     end
   end
 
-  @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}
-  def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) when is_binary(issue_identifier) do
+  @spec issue_payload(String.t(), GenServer.name(), timeout()) ::
+          {:ok, map()} | {:error, :issue_not_found}
+  def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms)
+      when is_binary(issue_identifier) do
     case Orchestrator.snapshot(orchestrator, snapshot_timeout_ms) do
       %{} = snapshot ->
         running = Enum.find(snapshot.running, &(&1.identifier == issue_identifier))
@@ -96,6 +104,10 @@ defmodule SymphonyElixirWeb.Presenter do
   defp issue_status(_running, _retry), do: "running"
 
   defp running_entry_payload(entry) do
+    now = DateTime.utc_now()
+    stall_timeout_ms = Config.codex_stall_timeout_ms()
+    last_timestamp = entry.last_codex_timestamp || entry.started_at
+
     %{
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
@@ -113,6 +125,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      health: health_payload(last_timestamp, now, stall_timeout_ms),
       agent: %{
         command: Map.get(entry, :agent_command),
         engine: Map.get(entry, :agent_engine),
@@ -124,6 +137,58 @@ defmodule SymphonyElixirWeb.Presenter do
         output_tokens: entry.codex_output_tokens,
         total_tokens: entry.codex_total_tokens
       }
+    }
+  end
+
+  @spec health_payload(DateTime.t() | nil, DateTime.t(), integer()) :: map()
+  @doc """
+  Computes the health status of a session based on the last event timestamp.
+  Returns a map with:
+  - status: :streaming, :idle, :stalled, or :unknown
+  - last_update_age_ms: time since last event in milliseconds
+  - stall_timeout_ms: the configured stall timeout
+  """
+  def health_payload(_last_timestamp, _now, stall_timeout_ms)
+      when not is_struct(_last_timestamp, DateTime) or not is_integer(stall_timeout_ms) do
+    %{status: :unknown, last_update_age_ms: nil, stall_timeout_ms: stall_timeout_ms}
+  end
+
+  def health_payload(last_timestamp, %DateTime{} = now, stall_timeout_ms) do
+    last_update_age_ms = DateTime.diff(now, last_timestamp, :millisecond)
+
+    status =
+      cond do
+        last_update_age_ms > stall_timeout_ms -> :stalled
+        last_update_age_ms > div(stall_timeout_ms, 2) -> :idle
+        true -> :streaming
+      end
+
+    %{
+      status: status,
+      last_update_age_ms: last_update_age_ms,
+      stall_timeout_ms: stall_timeout_ms
+    }
+  end
+
+  def health_payload(nil, _now, stall_timeout_ms) do
+    %{status: :unknown, last_update_age_ms: nil, stall_timeout_ms: stall_timeout_ms}
+  end
+
+  def health_payload(last_timestamp, %DateTime{} = now, stall_timeout_ms)
+      when is_integer(stall_timeout_ms) do
+    last_update_age_ms = DateTime.diff(now, last_timestamp, :millisecond)
+
+    status =
+      cond do
+        last_update_age_ms > stall_timeout_ms -> :stalled
+        last_update_age_ms > div(stall_timeout_ms, 2) -> :idle
+        true -> :streaming
+      end
+
+    %{
+      status: status,
+      last_update_age_ms: last_update_age_ms,
+      stall_timeout_ms: stall_timeout_ms
     }
   end
 

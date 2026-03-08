@@ -368,6 +368,14 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
+                 "health" => %{
+                   "status" => "streaming",
+                   "last_update_age_ms" =>
+                     state_payload["running"]
+                     |> List.first()
+                     |> get_in(["health", "last_update_age_ms"]),
+                   "stall_timeout_ms" => 300_000
+                 },
                  "agent" => %{
                    "command" => "python3 scripts/symphony/bin/opencode_app_server.py",
                    "engine" => "opencode",
@@ -526,7 +534,11 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "<style>"
 
     dashboard_css_conn = get(build_conn(), "/dashboard.css")
-    assert get_resp_header(dashboard_css_conn, "cache-control") == ["no-store, max-age=0, must-revalidate"]
+
+    assert get_resp_header(dashboard_css_conn, "cache-control") == [
+             "no-store, max-age=0, must-revalidate"
+           ]
+
     assert get_resp_header(dashboard_css_conn, "pragma") == ["no-cache"]
     assert get_resp_header(dashboard_css_conn, "expires") == ["0"]
     dashboard_css = response(dashboard_css_conn, 200)
@@ -578,7 +590,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Unassigned"
     assert html =~ "Copy ID"
     assert html =~ "Latest update"
-    assert html =~ "Runtime health"
+    assert html =~ "Stream health"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
