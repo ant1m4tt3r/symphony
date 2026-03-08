@@ -7,19 +7,25 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
   @runtime_tick_ms 1_000
-  @runtime_health_fresh_seconds 120
-  @runtime_health_stale_seconds 600
   @update_preview_char_limit 140
 
   @toggleable_columns [
-    %{id: "runtime_health", label: "Runtime health"},
+    %{id: "last_update", label: "Last update"},
+    %{id: "runtime_health", label: "Stream health"},
     %{id: "runtime", label: "Runtime"},
     %{id: "agent", label: "Agent"},
     %{id: "tokens", label: "Tokens"},
     %{id: "update", label: "Latest update"}
   ]
 
-  @default_visible MapSet.new(["runtime_health", "runtime", "agent", "tokens", "update"])
+  @default_visible MapSet.new([
+                     "last_update",
+                     "runtime_health",
+                     "runtime",
+                     "agent",
+                     "tokens",
+                     "update"
+                   ])
 
   @impl true
   def mount(_params, _session, socket) do
@@ -189,15 +195,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <div class="task-card-grid">
               <article :for={entry <- @payload.running} class="task-card">
                 <% update = update_payload(entry) %>
-                <% runtime_health = runtime_health_status(entry, @now) %>
+                <% stream_health = stream_health_status(entry.health) %>
                 <div class="task-card-header">
                   <div class="task-card-id-row">
                     <span class="task-card-id"><%= entry.issue_identifier %></span>
                     <span class={state_badge_class(entry.state)}>
                       <%= entry.state %>
                     </span>
-                    <span class={runtime_health_badge_class(runtime_health)}>
-                      <%= runtime_health_label(runtime_health) %>
+                    <span class={stream_health_badge_class(stream_health)} title={stream_health_tooltip(entry.health)}>
+                      <%= stream_health_label(stream_health) %>
                     </span>
                   </div>
                   <span class={"task-card-priority #{priority_class(entry.priority)}"}>
@@ -333,6 +339,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 <colgroup>
                   <col style="width: 16rem;" />
                   <col style="width: 8rem;" />
+                  <%= if col_visible?(@visible_columns, "last_update") do %><col style="width: 10rem;" /><% end %>
                   <%= if col_visible?(@visible_columns, "runtime_health") do %><col style="width: 8.5rem;" /><% end %>
                   <%= if col_visible?(@visible_columns, "runtime") do %><col style="width: 14rem;" /><% end %>
                   <%= if col_visible?(@visible_columns, "agent") do %><col style="width: 13rem;" /><% end %>
@@ -343,7 +350,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   <tr>
                     <th>Issue</th>
                     <th>State</th>
-                    <%= if col_visible?(@visible_columns, "runtime_health") do %><th>Runtime health</th><% end %>
+                    <%= if col_visible?(@visible_columns, "last_update") do %><th>Last update</th><% end %>
+                    <%= if col_visible?(@visible_columns, "runtime_health") do %><th>Stream health</th><% end %>
                     <%= if col_visible?(@visible_columns, "runtime") do %><th>Runtime</th><% end %>
                     <%= if col_visible?(@visible_columns, "agent") do %><th>Agent</th><% end %>
                     <%= if col_visible?(@visible_columns, "tokens") do %><th>Tokens</th><% end %>
@@ -364,11 +372,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
                         <%= entry.state %>
                       </span>
                     </td>
+                    <%= if col_visible?(@visible_columns, "last_update") do %>
+                      <td>
+                        <span class="numeric" title="Time since last agent event">
+                          <%= format_last_update_age(entry.health) %>
+                        </span>
+                      </td>
+                    <% end %>
                     <%= if col_visible?(@visible_columns, "runtime_health") do %>
                       <td>
-                        <% runtime_health = runtime_health_status(entry, @now) %>
-                        <span class={runtime_health_badge_class(runtime_health)}>
-                          <%= runtime_health_label(runtime_health) %>
+                        <% stream_health = stream_health_status(entry.health) %>
+                        <span class={stream_health_badge_class(stream_health)} title={stream_health_tooltip(entry.health)}>
+                          <%= stream_health_label(stream_health) %>
                         </span>
                       </td>
                     <% end %>
@@ -513,7 +528,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
       end)
   end
 
-  defp format_runtime_and_turns(started_at, turn_count, now) when is_integer(turn_count) and turn_count > 0 do
+  defp format_runtime_and_turns(started_at, turn_count, now)
+       when is_integer(turn_count) and turn_count > 0 do
     "#{format_runtime_seconds(runtime_seconds_from_started_at(started_at, now))} / #{turn_count}"
   end
 
@@ -531,7 +547,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
     DateTime.diff(now, started_at, :second)
   end
 
-  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now) when is_binary(started_at) do
+  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now)
+       when is_binary(started_at) do
     case DateTime.from_iso8601(started_at) do
       {:ok, parsed, _offset} -> runtime_seconds_from_started_at(parsed, now)
       _ -> 0
@@ -550,8 +567,12 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp format_int(_value), do: "n/a"
 
-  defp runtime_label(%{effective: effective}) when is_binary(effective) and effective != "", do: effective
-  defp runtime_label(%{requested: requested}) when is_binary(requested) and requested != "", do: requested
+  defp runtime_label(%{effective: effective}) when is_binary(effective) and effective != "",
+    do: effective
+
+  defp runtime_label(%{requested: requested}) when is_binary(requested) and requested != "",
+    do: requested
+
   defp runtime_label(_runtime), do: "n/a"
 
   defp priority_label(nil), do: "No priority"
@@ -628,58 +649,50 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp truncate_copy(text, _limit), do: {to_string(text), false}
 
-  defp runtime_health_status(entry, now) do
-    state = entry.state |> to_string() |> String.downcase()
+  defp stream_health_status(nil), do: :unknown
+  defp stream_health_status(%{status: status}), do: status
+  defp stream_health_status(_), do: :unknown
 
-    cond do
-      String.contains?(state, ["blocked", "error", "failed"]) ->
-        :critical
+  defp stream_health_label(:streaming), do: "Streaming"
+  defp stream_health_label(:idle), do: "Idle"
+  defp stream_health_label(:stalled), do: "Stalled"
+  defp stream_health_label(:unknown), do: "Unknown"
 
-      String.contains?(state, ["queued", "pending", "retry"]) ->
-        :watch
-
-      true ->
-        case seconds_since(entry.last_event_at, now) do
-          nil -> :unknown
-          seconds when seconds <= @runtime_health_fresh_seconds -> :healthy
-          seconds when seconds <= @runtime_health_stale_seconds -> :watch
-          _ -> :stale
-        end
-    end
-  end
-
-  defp runtime_health_label(:healthy), do: "Healthy"
-  defp runtime_health_label(:watch), do: "Watch"
-  defp runtime_health_label(:stale), do: "Stale"
-  defp runtime_health_label(:critical), do: "Blocked"
-  defp runtime_health_label(:unknown), do: "Unknown"
-
-  defp runtime_health_badge_class(status) do
-    base = "runtime-health-badge"
+  defp stream_health_badge_class(status) do
+    base = "stream-health-badge"
 
     case status do
-      :healthy -> "#{base} runtime-health-badge-healthy"
-      :watch -> "#{base} runtime-health-badge-watch"
-      :stale -> "#{base} runtime-health-badge-stale"
-      :critical -> "#{base} runtime-health-badge-critical"
-      _ -> "#{base} runtime-health-badge-unknown"
+      :streaming -> "#{base} stream-health-badge-streaming"
+      :idle -> "#{base} stream-health-badge-idle"
+      :stalled -> "#{base} stream-health-badge-stalled"
+      _ -> "#{base} stream-health-badge-unknown"
     end
   end
 
-  defp seconds_since(nil, _now), do: nil
-
-  defp seconds_since(%DateTime{} = time, %DateTime{} = now) do
-    max(DateTime.diff(now, time, :second), 0)
+  defp stream_health_tooltip(%{last_update_age_ms: age_ms, stall_timeout_ms: timeout_ms})
+       when is_integer(age_ms) and is_integer(timeout_ms) do
+    percent = Float.round(age_ms / timeout_ms * 100, 0)
+    "#{percent}% of stall timeout (#{format_milliseconds(timeout_ms)})"
   end
 
-  defp seconds_since(time, %DateTime{} = now) when is_binary(time) do
-    case DateTime.from_iso8601(time) do
-      {:ok, parsed, _offset} -> seconds_since(parsed, now)
-      _ -> nil
+  defp stream_health_tooltip(_), do: "No event data available"
+
+  defp format_last_update_age(nil), do: "n/a"
+  defp format_last_update_age(%{last_update_age_ms: nil}), do: "n/a"
+
+  defp format_last_update_age(%{last_update_age_ms: ms}) when is_integer(ms),
+    do: format_milliseconds(ms)
+
+  defp format_last_update_age(_), do: "n/a"
+
+  defp format_milliseconds(ms) when is_integer(ms) do
+    cond do
+      ms < 1_000 -> "#{ms}ms"
+      ms < 60_000 -> "#{div(ms, 1_000)}s"
+      ms < 3_600_000 -> "#{div(ms, 60_000)}m #{div(rem(ms, 60_000), 1_000)}s"
+      true -> "#{div(ms, 3_600_000)}h #{div(rem(ms, 3_600_000), 60_000)}m"
     end
   end
-
-  defp seconds_since(_time, _now), do: nil
 
   defp display_or_na(value) when is_binary(value) do
     trimmed = String.trim(value)
@@ -729,10 +742,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
     normalized = state |> to_string() |> String.downcase()
 
     cond do
-      String.contains?(normalized, ["progress", "running", "active"]) -> "#{base} state-badge-active"
-      String.contains?(normalized, ["blocked", "error", "failed"]) -> "#{base} state-badge-danger"
-      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
-      true -> base
+      String.contains?(normalized, ["progress", "running", "active"]) ->
+        "#{base} state-badge-active"
+
+      String.contains?(normalized, ["blocked", "error", "failed"]) ->
+        "#{base} state-badge-danger"
+
+      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) ->
+        "#{base} state-badge-warning"
+
+      true ->
+        base
     end
   end
 
