@@ -20,6 +20,11 @@ defmodule SymphonyElixir.Codex.AppServer do
           auto_approve_requests: boolean(),
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
+          requested_runtime: String.t(),
+          requested_runtime_source: String.t(),
+          effective_runtime: String.t(),
+          runtime_command: String.t(),
+          runtime_fallback_reason: String.t() | nil,
           thread_id: String.t(),
           workspace: Path.t()
         }
@@ -35,10 +40,12 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  @spec start_session(Path.t()) :: {:ok, session()} | {:error, term()}
-  def start_session(workspace) do
+  @spec start_session(Path.t(), map() | nil) :: {:ok, session()} | {:error, term()}
+  def start_session(workspace, runtime_selection \\ nil) do
+    runtime_selection = normalize_runtime_selection(runtime_selection)
+
     with :ok <- validate_workspace_cwd(workspace),
-         {:ok, port} <- start_port(workspace) do
+         {:ok, port} <- start_port(workspace, runtime_selection.runtime_command) do
       metadata = port_metadata(port)
       expanded_workspace = Path.expand(workspace)
 
@@ -52,6 +59,11 @@ defmodule SymphonyElixir.Codex.AppServer do
            auto_approve_requests: session_policies.approval_policy == "never",
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
+           requested_runtime: runtime_selection.requested_runtime,
+           requested_runtime_source: runtime_selection.requested_source,
+           effective_runtime: runtime_selection.effective_runtime,
+           runtime_command: runtime_selection.runtime_command,
+           runtime_fallback_reason: runtime_selection.runtime_fallback_reason,
            thread_id: thread_id,
            workspace: expanded_workspace
          }}
@@ -71,6 +83,11 @@ defmodule SymphonyElixir.Codex.AppServer do
           approval_policy: approval_policy,
           auto_approve_requests: auto_approve_requests,
           turn_sandbox_policy: turn_sandbox_policy,
+          requested_runtime: requested_runtime,
+          requested_runtime_source: requested_runtime_source,
+          effective_runtime: effective_runtime,
+          runtime_command: runtime_command,
+          runtime_fallback_reason: runtime_fallback_reason,
           thread_id: thread_id,
           workspace: workspace
         },
@@ -96,7 +113,12 @@ defmodule SymphonyElixir.Codex.AppServer do
           %{
             session_id: session_id,
             thread_id: thread_id,
-            turn_id: turn_id
+            turn_id: turn_id,
+            requested_runtime: requested_runtime,
+            requested_runtime_source: requested_runtime_source,
+            effective_runtime: effective_runtime,
+            runtime_command: runtime_command,
+            runtime_fallback_reason: runtime_fallback_reason
           },
           metadata
         )
@@ -159,7 +181,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace) do
+  defp start_port(workspace, runtime_command) do
     executable = System.find_executable("bash")
 
     if is_nil(executable) do
@@ -172,7 +194,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.codex_command())],
+            args: [~c"-lc", String.to_charlist(runtime_command)],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
@@ -218,6 +240,34 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp session_policies(workspace) do
     Config.codex_runtime_settings(workspace)
+  end
+
+  defp normalize_runtime_selection(%{} = runtime_selection) do
+    %{
+      requested_runtime: runtime_selection_value(runtime_selection, :requested_runtime, "codex"),
+      requested_source: runtime_selection_value(runtime_selection, :requested_source, "workflow"),
+      effective_runtime: runtime_selection_value(runtime_selection, :effective_runtime, "codex"),
+      runtime_command: runtime_selection_value(runtime_selection, :runtime_command, Config.codex_command()),
+      runtime_fallback_reason: runtime_selection_value(runtime_selection, :runtime_fallback_reason, nil)
+    }
+  end
+
+  defp normalize_runtime_selection(_runtime_selection) do
+    %{
+      requested_runtime: "codex",
+      requested_source: "legacy_default",
+      effective_runtime: "codex",
+      runtime_command: Config.codex_command(),
+      runtime_fallback_reason: nil
+    }
+  end
+
+  defp runtime_selection_value(selection, key, default) when is_map(selection) and is_atom(key) do
+    if Map.has_key?(selection, key) do
+      Map.get(selection, key)
+    else
+      Map.get(selection, Atom.to_string(key), default)
+    end
   end
 
   defp do_start_session(port, workspace, session_policies) do
@@ -474,16 +524,22 @@ defmodule SymphonyElixir.Codex.AppServer do
          _tool_executor,
          auto_approve_requests
        ) do
-    approve_or_require(
-      port,
-      id,
-      "acceptForSession",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
+    case maybe_block_risky_merge_push_command(payload) do
+      :blocked ->
+        :approval_required
+
+      :ok ->
+        approve_or_require(
+          port,
+          id,
+          "acceptForSession",
+          payload,
+          payload_string,
+          on_message,
+          metadata,
+          auto_approve_requests
+        )
+    end
   end
 
   defp maybe_handle_approval_request(
@@ -528,16 +584,22 @@ defmodule SymphonyElixir.Codex.AppServer do
          _tool_executor,
          auto_approve_requests
        ) do
-    approve_or_require(
-      port,
-      id,
-      "approved_for_session",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
+    case maybe_block_risky_merge_push_command(payload) do
+      :blocked ->
+        :approval_required
+
+      :ok ->
+        approve_or_require(
+          port,
+          id,
+          "approved_for_session",
+          payload,
+          payload_string,
+          on_message,
+          metadata,
+          auto_approve_requests
+        )
+    end
   end
 
   defp maybe_handle_approval_request(
@@ -942,6 +1004,109 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp tool_call_arguments(_params), do: %{}
+
+  defp maybe_block_risky_merge_push_command(payload) do
+    case {merge_push_guardrails_enabled?(), approval_payload_command(payload)} do
+      {true, command} when is_binary(command) ->
+        maybe_block_risky_merge_push_command_with_guardrails(command)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp maybe_block_risky_merge_push_command_with_guardrails(command) do
+    case risky_merge_or_push_command?(command) do
+      true ->
+        Logger.warning("Blocking risky merge/push command approval request: #{command}")
+        :blocked
+
+      false ->
+        :ok
+    end
+  end
+
+  defp merge_push_guardrails_enabled? do
+    not Config.codex_allow_unsafe_merge_push?()
+  end
+
+  defp approval_payload_command(%{} = payload) do
+    params =
+      case Map.get(payload, "params") || Map.get(payload, :params) do
+        %{} = request_params -> request_params
+        _ -> %{}
+      end
+
+    params
+    |> Map.get("parsedCmd")
+    |> fallback_approval_payload_command(params)
+    |> normalize_approval_payload_command()
+  end
+
+  defp fallback_approval_payload_command(nil, params) do
+    Map.get(params, "command") || Map.get(params, "cmd") || Map.get(params, "argv") || Map.get(params, "args")
+  end
+
+  defp fallback_approval_payload_command(command, _params), do: command
+
+  defp normalize_approval_payload_command(%{} = command) do
+    binary_command = Map.get(command, "parsedCmd") || Map.get(command, "command") || Map.get(command, "cmd")
+    args = Map.get(command, "args") || Map.get(command, "argv")
+
+    if is_binary(binary_command) and is_list(args) do
+      normalize_approval_payload_command([binary_command | args])
+    else
+      normalize_approval_payload_command(binary_command || args)
+    end
+  end
+
+  defp normalize_approval_payload_command(command) when is_binary(command) do
+    trimmed = String.trim(command)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_approval_payload_command(command) when is_list(command) do
+    if Enum.all?(command, &is_binary/1) do
+      command
+      |> Enum.join(" ")
+      |> normalize_approval_payload_command()
+    else
+      nil
+    end
+  end
+
+  defp normalize_approval_payload_command(_command), do: nil
+
+  defp risky_merge_or_push_command?(command) do
+    normalized_command =
+      command
+      |> String.trim()
+      |> String.downcase()
+
+    normalized_command != "" and
+      (risky_gh_merge_command?(normalized_command) or
+         risky_git_merge_to_main_command?(normalized_command) or
+         risky_git_push_to_main_command?(normalized_command))
+  end
+
+  defp risky_gh_merge_command?(command) do
+    String.match?(command, ~r/\bgh\s+pr\s+merge\b/) or
+      (String.match?(command, ~r/\bgh\s+api\b/) and
+         (String.match?(command, ~r/\bpulls\/[^\s]+\/merge\b/) or
+            String.contains?(command, "mergepullrequest")))
+  end
+
+  defp risky_git_merge_to_main_command?(command) do
+    String.match?(command, ~r/\bgit\s+merge\b/) and
+      String.match?(command, ~r/\bgit\s+(?:checkout|switch)\b[^;&|\n]*\bmain\b/)
+  end
+
+  defp risky_git_push_to_main_command?(command) do
+    String.match?(command, ~r/\bgit\s+push\b/) and
+      (String.match?(command, ~r/\bgit\s+push\b[^;&|\n]*\smain(?:\s|$)/) or
+         String.match?(command, ~r/\bgit\s+push\b[^;&|\n]*:[[:space:]]*main(?:\s|$)/) or
+         String.match?(command, ~r/\bgit\s+push\b[^;&|\n]*refs\/heads\/main(?:\s|$)/))
+  end
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"

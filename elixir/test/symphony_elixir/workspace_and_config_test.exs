@@ -415,6 +415,54 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Enum.map(sorted, & &1.identifier) == ["MT-200", "MT-201", "MT-199"]
   end
 
+  test "orchestrator prioritizes in-review work and de-prioritizes epic planning tickets" do
+    in_review = %Issue{
+      id: "issue-review-1",
+      identifier: "MT-300",
+      title: "Address review feedback",
+      state: "In Review",
+      priority: 3,
+      created_at: ~U[2026-01-04 00:00:00Z]
+    }
+
+    todo_task = %Issue{
+      id: "issue-todo-1",
+      identifier: "MT-301",
+      title: "Implement task",
+      state: "Todo",
+      priority: 1,
+      created_at: ~U[2026-01-03 00:00:00Z]
+    }
+
+    todo_epic = %Issue{
+      id: "issue-epic-1",
+      identifier: "MT-302",
+      title: "[Epic] Planning container",
+      state: "Todo",
+      priority: 1,
+      created_at: ~U[2026-01-01 00:00:00Z]
+    }
+
+    backlog_task = %Issue{
+      id: "issue-backlog-1",
+      identifier: "MT-303",
+      title: "Backlog implementation task",
+      state: "Backlog",
+      priority: 1,
+      created_at: ~U[2026-01-01 00:00:00Z]
+    }
+
+    sorted =
+      Orchestrator.sort_issues_for_dispatch_for_test([
+        todo_epic,
+        in_review,
+        backlog_task,
+        todo_task
+      ])
+
+    assert Enum.map(sorted, & &1.identifier) == ["MT-300", "MT-301", "MT-302", "MT-303"]
+  end
+
   test "todo issue with non-terminal blocker is not dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
@@ -645,6 +693,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       workspace_root: nil,
       max_concurrent_agents: nil,
+      agent_runtime: nil,
       codex_approval_policy: nil,
       codex_thread_sandbox: nil,
       codex_turn_sandbox_policy: nil,
@@ -660,7 +709,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.linear_project_slug() == nil
     assert Config.workspace_root() == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert Config.max_concurrent_agents() == 10
+    assert Config.agent_runtime_override() == nil
+    assert Config.agent_runtime() == "claude"
     assert Config.codex_command() == "codex app-server"
+    assert Config.claude_command() == "claude app-server"
+    assert Config.command_for_runtime("claude") == "claude app-server"
+    assert Config.command_for_runtime("codex") == "codex app-server"
 
     assert Config.codex_approval_policy() == %{
              "reject" => %{
@@ -684,6 +738,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.codex_turn_timeout_ms() == 3_600_000
     assert Config.codex_read_timeout_ms() == 5_000
     assert Config.codex_stall_timeout_ms() == 300_000
+    refute Config.codex_allow_unsafe_merge_push?()
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server --model gpt-5.3-codex")
     assert Config.codex_command() == "codex app-server --model gpt-5.3-codex"
@@ -691,7 +746,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_approval_policy: "on-request",
       codex_thread_sandbox: "workspace-write",
-      codex_turn_sandbox_policy: %{type: "workspaceWrite", writableRoots: ["/tmp/workspace", "/tmp/cache"]}
+      codex_turn_sandbox_policy: %{type: "workspaceWrite", writableRoots: ["/tmp/workspace", "/tmp/cache"]},
+      codex_allow_unsafe_merge_push: true
     )
 
     assert Config.codex_approval_policy() == "on-request"
@@ -701,6 +757,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              "type" => "workspaceWrite",
              "writableRoots" => ["/tmp/workspace", "/tmp/cache"]
            }
+
+    assert Config.codex_allow_unsafe_merge_push?()
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_runtime: "codex", claude_command: "/bin/sh app-server")
+    assert Config.agent_runtime_override() == "codex"
+    assert Config.agent_runtime() == "codex"
+    assert Config.claude_command() == "/bin/sh app-server"
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ",")
     assert Config.linear_active_states() == ["Todo", "In Progress"]
@@ -746,7 +809,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.server_port() == nil
     assert Config.server_host() == "123"
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "")
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_approval_policy: "")
 
     assert Config.codex_approval_policy() == %{
              "reject" => %{
@@ -758,11 +821,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:error, {:invalid_codex_approval_policy, ""}} = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: "")
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_thread_sandbox: "")
     assert Config.codex_thread_sandbox() == "workspace-write"
     assert {:error, {:invalid_codex_thread_sandbox, ""}} = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_turn_sandbox_policy: "bad")
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_turn_sandbox_policy: "bad")
 
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "workspaceWrite",
@@ -777,6 +840,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      agent_engine: "codex",
       codex_approval_policy: "future-policy",
       codex_thread_sandbox: "future-sandbox",
       codex_turn_sandbox_policy: %{
@@ -797,6 +861,44 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
     assert Config.codex_command() == "codex app-server"
+  end
+
+  test "agent.engine defaults to claude and supports codex" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    assert Config.agent_engine() == "claude"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex")
+    assert Config.agent_engine() == "codex"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "Claude")
+    assert Config.agent_engine() == "claude"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "CODEX")
+    assert Config.agent_engine() == "codex"
+  end
+
+  test "validate! rejects unsupported agent engines" do
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "unsupported")
+    assert {:error, {:unsupported_agent_engine, "unsupported"}} = Config.validate!()
+  end
+
+  test "validate! skips codex validation when engine is claude" do
+    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: 123)
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: 123)
+    assert :ok = Config.validate!()
+  end
+
+  test "validate! runs codex validation when engine is codex" do
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_approval_policy: 123)
+    assert {:error, {:invalid_codex_approval_policy, 123}} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex", codex_thread_sandbox: 123)
+    assert {:error, {:invalid_codex_thread_sandbox, 123}} = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_engine: "codex")
+    assert :ok = Config.validate!()
   end
 
   test "config resolves $VAR references for env-backed secret and path values" do

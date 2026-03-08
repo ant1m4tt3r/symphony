@@ -318,6 +318,178 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server blocks risky merge/push command approvals by default even when approval policy is never" do
+    risky_commands = [
+      "gh pr merge 123 --squash",
+      "git switch main && git merge feature-branch",
+      "git push origin HEAD:main"
+    ]
+
+    Enum.each(risky_commands, fn risky_command ->
+      test_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-app-server-risky-command-block-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        workspace_root = Path.join(test_root, "workspaces")
+        workspace = Path.join(workspace_root, "MT-891")
+        codex_binary = Path.join(test_root, "fake-codex")
+        File.mkdir_p!(workspace)
+
+        File.write!(codex_binary, """
+        #!/bin/sh
+        count=0
+        while IFS= read -r _line; do
+          count=$((count + 1))
+
+          case "$count" in
+            1)
+              printf '%s\\n' '{"id":1,"result":{}}'
+              ;;
+            2)
+              ;;
+            3)
+              printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-891"}}}'
+              ;;
+            4)
+              printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-891"}}}'
+              printf '%s\\n' '{"id":199,"method":"item/commandExecution/requestApproval","params":{"command":"#{risky_command}","cwd":"/tmp","reason":"need approval"}}'
+              ;;
+            *)
+              sleep 1
+              ;;
+          esac
+        done
+        """)
+
+        File.chmod!(codex_binary, 0o755)
+
+        write_workflow_file!(Workflow.workflow_file_path(),
+          workspace_root: workspace_root,
+          codex_command: "#{codex_binary} app-server",
+          codex_approval_policy: "never"
+        )
+
+        issue = %Issue{
+          id: "issue-risky-command-block",
+          identifier: "MT-891",
+          title: "Block risky merge/push commands",
+          description: "Ensure risky merge/push commands are blocked by default",
+          state: "In Progress",
+          url: "https://example.org/issues/MT-891",
+          labels: ["backend"]
+        }
+
+        assert {:error, {:approval_required, payload}} =
+                 AppServer.run(workspace, "Handle risky command approval request", issue)
+
+        assert payload["method"] == "item/commandExecution/requestApproval"
+      after
+        File.rm_rf(test_root)
+      end
+    end)
+  end
+
+  test "app server allows risky merge/push command approvals when codex.allow_unsafe_merge_push is enabled" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-risky-command-opt-out-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-892")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-risky-command-opt-out.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-risky-command-opt-out.trace}"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' \"$line\" >> \"$trace_file\"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-892"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-892"}}}'
+            printf '%s\\n' '{"id":299,"method":"item/commandExecution/requestApproval","params":{"command":"gh pr merge 123 --squash","cwd":"/tmp","reason":"need approval"}}'
+            ;;
+          5)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_approval_policy: "never",
+        codex_allow_unsafe_merge_push: true
+      )
+
+      issue = %Issue{
+        id: "issue-risky-command-opt-out",
+        identifier: "MT-892",
+        title: "Allow risky merge/push commands with explicit opt-out",
+        description: "Ensure local opt-out switch bypasses merge/push guardrails",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-892",
+        labels: ["backend"]
+      }
+
+      assert {:ok, _result} = AppServer.run(workspace, "Handle risky command approval request", issue)
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 payload =
+                   line
+                   |> String.trim_leading("JSON:")
+                   |> Jason.decode!()
+
+                 payload["id"] == 299 and get_in(payload, ["result", "decision"]) == "acceptForSession"
+               else
+                 false
+               end
+             end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server auto-approves MCP tool approval prompts when approval policy is never" do
     test_root =
       Path.join(

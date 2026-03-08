@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+auto_merge_enabled() {
+  case "${SYMPHONY_ALLOW_AUTO_MERGE:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+deny_merge() {
+  echo "[symphony-guard] blocked: automated PR merges are disabled (manual merge only)." >&2
+  exit 42
+}
+
+# Return the index of the next positional token starting at $1.
+# This skips common gh global flags so command matching still works when users
+# run variants like `gh --repo owner/repo pr merge`.
+next_positional_index() {
+  local start="$1"
+  shift
+  local -a args=("$@")
+  local i="$start"
+
+  while (( i < ${#args[@]} )); do
+    local arg="${args[i]}"
+    case "$arg" in
+      --)
+        ((i += 1))
+        ;;
+      -R|--repo|--hostname)
+        ((i += 2))
+        ;;
+      --repo=*|--hostname=*)
+        ((i += 1))
+        ;;
+      -*)
+        ((i += 1))
+        ;;
+      *)
+        printf '%s' "$i"
+        return 0
+        ;;
+    esac
+  done
+
+  printf '%s' "-1"
+}
+
+real_gh="${SYMPHONY_REAL_GH:-}"
+if [[ -z "$real_gh" || ! -x "$real_gh" ]]; then
+  echo "[symphony-guard] missing real gh binary via SYMPHONY_REAL_GH; refusing to continue." >&2
+  exit 127
+fi
+
+if ! auto_merge_enabled; then
+  args=("$@")
+  command_index="$(next_positional_index 0 "${args[@]}")"
+  command=""
+  if (( command_index >= 0 )); then
+    command="${args[command_index]}"
+  fi
+
+  if [[ "$command" == "pr" ]]; then
+    subcommand_index="$(next_positional_index "$((command_index + 1))" "${args[@]}")"
+    if (( subcommand_index >= 0 )) && [[ "${args[subcommand_index]}" == "merge" ]]; then
+      deny_merge
+    fi
+  fi
+
+  if [[ "$command" == "api" ]]; then
+    for arg in "${args[@]}"; do
+      if [[ "$arg" =~ /pulls/[0-9]+/merge([/?#].*)?$ ]]; then
+        deny_merge
+      fi
+    done
+  fi
+fi
+
+exec "$real_gh" "$@"

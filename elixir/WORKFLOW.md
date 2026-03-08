@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  project_slug: "2010f66df8de"
   active_states:
     - Todo
     - In Progress
@@ -19,19 +19,21 @@ workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
+    git clone --depth 1 https://github.com/ant1m4tt3r/symphony .
     if command -v mise >/dev/null 2>&1; then
       cd elixir && mise trust && mise exec -- mix deps.get
     fi
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
+  engine: claude
   max_concurrent_agents: 10
   max_turns: 20
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
   approval_policy: never
   thread_sandbox: workspace-write
+  allow_unsafe_merge_push: false
   turn_sandbox_policy:
     type: workspaceWrite
 ---
@@ -111,6 +113,93 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - `Merging` -> approved by human; execute the `land` skill flow (do not call `gh pr merge` directly).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
+
+## Status transition gates
+
+Each status transition has gate criteria that **must** be satisfied before the
+move is allowed. The agent must verify every gate before calling
+`issueUpdate` to change state.
+
+### Valid transitions
+
+```
+Backlog ──► Todo          (human only)
+Todo ──► In Progress      (agent, on pickup)
+In Progress ──► Human Review  (agent, after PR validation)
+Human Review ──► Merging  (human only, after approval)
+Human Review ──► Rework   (human only, after requesting changes)
+Rework ──► In Progress    (agent, on rework start)
+Merging ──► Done          (agent, after PR merge via land skill)
+```
+
+### Gate: Todo → In Progress
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | Issue has `id`, `identifier`, `title`, and `state` | Query issue fields |
+| 2 | No non-terminal blockers exist | All `blockedBy` issues are in a terminal state |
+| 3 | Workpad bootstrap comment created or found | Search for `## Codex Workpad` marker |
+
+### Gate: In Progress → Human Review
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | A GitHub PR exists and is **open** (not closed/merged) | `gh pr view --json state` returns `OPEN` |
+| 2 | PR is **not** a draft | `gh pr view --json isDraft` returns `false` |
+| 3 | PR targets `main` | `gh pr view --json baseRefName` returns `main` |
+| 4 | PR is linked/attached to the Linear issue | Issue attachments or links contain the PR URL |
+| 5 | Branch has at least one commit for this issue | `git log origin/main..HEAD --oneline` is non-empty |
+| 6 | Acceptance criteria are met | Workpad checklist items checked |
+| 7 | Validation/tests pass on latest commit | `make -C elixir all` exits 0 |
+| 8 | PR feedback sweep is complete | No outstanding actionable comments remain |
+| 9 | PR checks are green | `gh pr checks` all pass |
+| 10 | PR has `symphony` label | `gh pr view --json labels` includes `symphony` |
+
+### Gate: Human Review → Rework
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | A human reviewer requested changes | Review state or explicit human comment |
+
+*This transition is human-initiated only; the agent does not move issues to Rework.*
+
+### Gate: Rework → In Progress
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | Existing PR is closed | `gh pr close` the current PR |
+| 2 | Previous workpad comment removed | Delete the old `## Codex Workpad` comment |
+| 3 | Fresh branch created from `origin/main` | `git checkout -b <new-branch> origin/main` |
+
+### Gate: Human Review → Merging
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | Human has approved the PR | PR review state is `APPROVED` |
+
+*This transition is human-initiated only.*
+
+### Gate: Merging → Done
+
+| # | Criterion | Verification |
+|---|-----------|--------------|
+| 1 | The linked PR is **merged** | `gh pr view --json state` returns `MERGED` |
+| 2 | Land skill flow completed | `.codex/skills/land/SKILL.md` was followed |
+
+**The Done state requires a merged PR. An issue must never be moved to Done
+unless its linked GitHub PR has been merged.**
+
+### Prohibited transitions
+
+- **No direct move from In Progress to Done.** Work must pass through Human
+  Review and Merging first.
+- **No direct move from Todo to Human Review.** Implementation must happen in
+  In Progress first.
+- **No agent-initiated merge.** The agent must never call `gh pr merge` or
+  merge via API; merging is human-controlled via the Merging state and land
+  skill.
+- **No move to Human Review without a working PR.** If no PR exists, the issue
+  stays in In Progress.
 
 ## Step 0: Determine current ticket state and route
 
@@ -240,12 +329,82 @@ Use this only when completion is blocked by missing required tools or missing au
 
 ## Step 3: Human Review and merge handling
 
+### In Review Pass Monitoring
+
+When the issue is in `Human Review` (In Review in Linear), run this explicit checklist at the **start of each pass** before deciding there is no action:
+
+#### Explicit Checklist for Each Review Pass
+
+1. **Fetch CI Status**
+   - Run: `gh pr checks <pr-number>`
+   - Verify: All required CI checks are passing (green)
+   - If CI fails: Investigate failure, implement fix, push update, stay in `Human Review`
+
+2. **Fetch PR Top-Level Comments**
+   - Run: `gh pr view <pr-number> --comments`
+   - Review: Read all new comments since last pass
+   - Action: Address each actionable human comment
+
+3. **Fetch PR Inline Review Comments**
+   - Run: `gh api repos/<owner>/<repo>/pulls/<pr-number>/comments`
+   - Review: Read all inline review comments (both resolved and unresolved)
+   - Action: Address each actionable comment or provide justified pushback
+
+4. **Fetch PR Review Summaries**
+   - Run: `gh pr view <pr-number> --json reviews`
+   - Review: Check for approved/pending/changes_requested states
+   - Action: If changes requested, move to `Rework`
+
+5. **Fetch Linear Issue Comments**
+   - Run: Query Linear issue comments via `linear_graphql`
+   - Review: Read all new human comments on the issue
+   - Action: Treat human comments as actionable steering
+
+6. **Fetch PR Conversation Threads**
+   - Run: `gh api repos/<owner>/<repo>/pulls/<pr-number>/conversation`
+   - Review: Read all conversation threads
+   - Action: Address pending discussions
+
+#### Failure/Suggestion Handling
+
+**CI Failures:**
+- Investigate the root cause of each failing check
+- Implement the required fix in code
+- Push the update and re-run CI
+- Stay in `Human Review` until all checks pass
+
+**PR Comments/Suggestions:**
+- Treat every human reviewer comment as actionable input
+- If the suggestion makes sense for scope/quality: implement the change
+- If the suggestion should not be applied: reply on the PR with a concise technical reason
+- Update the workpad with each feedback item and resolution status
+
+**Linear Issue Comments:**
+- Treat human comments as actionable steering
+- Comments prefixed with `[symphony]` (especially from PR author/assignee) are explicit directives
+- Implement requested changes or respond with technical justification
+
+**Automated Bot Comments:**
+- Ignore clearly automated bot comments except:
+  - When they report failing CI checks that require action
+  - When they report security vulnerabilities
+  - When they report breaking changes
+
+**State Transitions Based on Review:**
+- If CI fails: Stay in `Human Review`, fix and push
+- If changes requested via review: Move to `Rework`
+- If approved and PR merged: Move to `Done`
+- If PR merged by human: Move to `Done`
+
+### Human Review Workflow
+
 1. When the issue is in `Human Review`, do not code or change ticket content.
-2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
-3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
-4. If approved, human moves the issue to `Merging`.
-5. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-6. After merge is complete, move the issue to `Done`.
+2. At the start of each pass, run the explicit checklist above.
+3. Poll for updates as needed, including GitHub PR review comments from humans and bots.
+4. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
+5. If approved, human moves the issue to `Merging`.
+6. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
+7. After merge is complete, move the issue to `Done`.
 
 ## Step 4: Rework handling
 

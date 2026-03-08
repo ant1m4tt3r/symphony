@@ -13,6 +13,7 @@ defmodule SymphonyElixirWeb.Presenter do
       %{} = snapshot ->
         %{
           generated_at: generated_at,
+          agent_engine: Config.agent_engine(),
           counts: %{
             running: length(snapshot.running),
             retrying: length(snapshot.retrying)
@@ -106,17 +107,27 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
+      title: Map.get(entry, :title),
       state: entry.state,
       priority: Map.get(entry, :priority),
       assignee: Map.get(entry, :assignee),
       url: Map.get(entry, :url),
+      assignee_id: Map.get(entry, :assignee_id),
+      updated_at: iso8601(Map.get(entry, :updated_at)),
       branch_name: Map.get(entry, :branch_name),
       session_id: entry.session_id,
+      runtime: runtime_payload(entry),
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      agent: %{
+        command: Map.get(entry, :agent_command),
+        engine: Map.get(entry, :agent_engine),
+        provider: Map.get(entry, :agent_provider),
+        model: Map.get(entry, :agent_model)
+      },
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -138,12 +149,19 @@ defmodule SymphonyElixirWeb.Presenter do
   defp running_issue_payload(running) do
     %{
       session_id: running.session_id,
+      runtime: runtime_payload(running),
       turn_count: Map.get(running, :turn_count, 0),
       state: running.state,
       started_at: iso8601(running.started_at),
       last_event: running.last_codex_event,
       last_message: summarize_message(running.last_codex_message),
       last_event_at: iso8601(running.last_codex_timestamp),
+      agent: %{
+        command: Map.get(running, :agent_command),
+        engine: Map.get(running, :agent_engine),
+        provider: Map.get(running, :agent_provider),
+        model: Map.get(running, :agent_model)
+      },
       tokens: %{
         input_tokens: running.codex_input_tokens,
         output_tokens: running.codex_output_tokens,
@@ -173,6 +191,15 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
+
+  defp runtime_payload(entry) when is_map(entry) do
+    %{
+      requested: Map.get(entry, :requested_runtime),
+      effective: Map.get(entry, :effective_runtime),
+      source: Map.get(entry, :requested_runtime_source),
+      fallback_reason: Map.get(entry, :runtime_fallback_reason)
+    }
+  end
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

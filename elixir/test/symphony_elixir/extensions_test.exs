@@ -3,6 +3,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
+  import Plug.Conn, only: [get_resp_header: 2]
 
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
@@ -342,22 +343,38 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
+             "agent_engine" => "claude",
              "counts" => %{"running" => 1, "retrying" => 1},
              "running" => [
                %{
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
+                 "title" => nil,
                  "state" => "In Progress",
                  "priority" => nil,
                  "assignee" => nil,
                  "url" => nil,
+                 "assignee_id" => nil,
+                 "updated_at" => nil,
                  "branch_name" => nil,
                  "session_id" => "thread-http",
+                 "runtime" => %{
+                   "requested" => nil,
+                   "effective" => nil,
+                   "source" => nil,
+                   "fallback_reason" => nil
+                 },
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
+                 "agent" => %{
+                   "command" => "python3 scripts/symphony/bin/opencode_app_server.py",
+                   "engine" => "opencode",
+                   "provider" => "openai",
+                   "model" => "openai/gpt-5"
+                 },
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
                }
              ],
@@ -390,12 +407,24 @@ defmodule SymphonyElixir.ExtensionsTest do
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
                "session_id" => "thread-http",
+               "runtime" => %{
+                 "requested" => nil,
+                 "effective" => nil,
+                 "source" => nil,
+                 "fallback_reason" => nil
+               },
                "turn_count" => 7,
                "state" => "In Progress",
                "started_at" => issue_payload["running"]["started_at"],
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
+               "agent" => %{
+                 "command" => "python3 scripts/symphony/bin/opencode_app_server.py",
+                 "engine" => "opencode",
+                 "provider" => "openai",
+                 "model" => "openai/gpt-5"
+               },
                "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
              },
              "retry" => nil,
@@ -497,7 +526,11 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "/assets/app.js"
     refute html =~ "<style>"
 
-    dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
+    dashboard_css_conn = get(build_conn(), "/dashboard.css")
+    assert get_resp_header(dashboard_css_conn, "cache-control") == ["no-store, max-age=0, must-revalidate"]
+    assert get_resp_header(dashboard_css_conn, "pragma") == ["no-cache"]
+    assert get_resp_header(dashboard_css_conn, "expires") == ["0"]
+    dashboard_css = response(dashboard_css_conn, 200)
     assert dashboard_css =~ ":root {"
     assert dashboard_css =~ ".status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
@@ -541,6 +574,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Runtime"
     assert html =~ "Live"
     assert html =~ "Offline"
+    assert html =~ "Active work"
+    assert html =~ "No priority"
+    assert html =~ "Unassigned"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     refute html =~ "data-runtime-clock="
@@ -555,7 +591,13 @@ defmodule SymphonyElixir.ExtensionsTest do
         %{
           issue_id: "issue-http",
           identifier: "MT-HTTP",
+          title: "Build dashboard task cards",
           state: "In Progress",
+          priority: 2,
+          url: "https://linear.app/ant1m4tt3r/issue/MT-HTTP/build-dashboard-task-cards",
+          assignee_id: "user-0123456789abcdef",
+          updated_at: DateTime.add(DateTime.utc_now(), -120, :second),
+          branch_name: "hug-21-dashboard-task-cards",
           session_id: "thread-http",
           turn_count: 8,
           last_codex_event: :notification,
@@ -587,7 +629,13 @@ defmodule SymphonyElixir.ExtensionsTest do
     StatusDashboard.notify_update()
 
     assert_eventually(fn ->
-      render(view) =~ "agent message content streaming: structured update"
+      html = render(view)
+
+      html =~ "agent message content streaming: structured update" and
+        html =~ "Build dashboard task cards" and
+        html =~ "High" and
+        html =~ "Linear" and
+        html =~ "github.com/search?q=hug-21-dashboard-task-cards&amp;type=pullrequests"
     end)
   end
 
@@ -691,6 +739,10 @@ defmodule SymphonyElixir.ExtensionsTest do
           last_codex_message: "rendered",
           last_codex_timestamp: nil,
           last_codex_event: :notification,
+          agent_command: "python3 scripts/symphony/bin/opencode_app_server.py",
+          agent_engine: "opencode",
+          agent_provider: "openai",
+          agent_model: "openai/gpt-5",
           codex_input_tokens: 4,
           codex_output_tokens: 8,
           codex_total_tokens: 12,
