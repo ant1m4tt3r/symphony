@@ -28,7 +28,31 @@ defmodule SymphonyElixirWeb.Layouts do
 
             if (!window.Phoenix || !window.LiveView) return;
 
+            var hooks = {
+              ColumnPrefs: {
+                mounted: function () {
+                  var self = this;
+                  try {
+                    var stored = localStorage.getItem("symphony_column_prefs");
+                    if (stored) {
+                      var parsed = JSON.parse(stored);
+                      if (Array.isArray(parsed)) {
+                        self.pushEvent("restore-column-prefs", { visible: parsed });
+                      }
+                    }
+                  } catch (_e) {}
+
+                  self.handleEvent("store-column-prefs", function (payload) {
+                    try {
+                      localStorage.setItem("symphony_column_prefs", JSON.stringify(payload.visible));
+                    } catch (_e) {}
+                  });
+                }
+              }
+            };
+
             var liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
+              hooks: hooks,
               params: {_csrf_token: csrfToken}
             });
 

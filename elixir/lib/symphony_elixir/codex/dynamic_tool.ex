@@ -188,11 +188,31 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   end
 
+  defp tool_error_payload({:linear_api_status, status, metadata}) do
+    %{
+      "error" => %{
+        "message" => "Linear GraphQL request failed with HTTP #{status}.",
+        "status" => status,
+        "metadata" => metadata
+      }
+    }
+  end
+
   defp tool_error_payload({:linear_api_request, reason}) do
     %{
       "error" => %{
         "message" => "Linear GraphQL request failed before receiving a successful response.",
         "reason" => inspect(reason)
+      }
+    }
+  end
+
+  defp tool_error_payload({:linear_api_request, reason, metadata}) do
+    %{
+      "error" => %{
+        "message" => "Linear GraphQL request failed before receiving a successful response.",
+        "reason" => inspect(reason),
+        "metadata" => metadata
       }
     }
   end

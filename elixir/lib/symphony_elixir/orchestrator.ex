@@ -230,13 +230,39 @@ defmodule SymphonyElixir.Orchestrator do
         state
 
       {:error, reason} ->
-        Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+        log_linear_fetch_failure(reason)
         state
 
       false ->
         state
     end
   end
+
+  defp log_linear_fetch_failure({:linear_api_status, status, metadata}) when is_map(metadata) do
+    Logger.error("Failed to fetch from Linear status=#{status}" <> linear_fetch_metadata_context(metadata))
+  end
+
+  defp log_linear_fetch_failure({:linear_api_request, reason, metadata}) when is_map(metadata) do
+    Logger.error(
+      "Failed to fetch from Linear request_reason=#{inspect(reason)}" <>
+        linear_fetch_metadata_context(metadata)
+    )
+  end
+
+  defp log_linear_fetch_failure({:linear_api_status, status}) do
+    Logger.error("Failed to fetch from Linear status=#{status}")
+  end
+
+  defp log_linear_fetch_failure({:linear_api_request, reason}) do
+    Logger.error("Failed to fetch from Linear request_reason=#{inspect(reason)}")
+  end
+
+  defp log_linear_fetch_failure(reason) do
+    Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+  end
+
+  defp linear_fetch_metadata_context(metadata) when map_size(metadata) == 0, do: ""
+  defp linear_fetch_metadata_context(metadata), do: " metadata=" <> inspect(metadata, limit: 20)
 
   defp reconcile_running_issues(%State{} = state) do
     state = reconcile_stalled_running_issues(state)

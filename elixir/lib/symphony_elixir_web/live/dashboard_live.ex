@@ -7,6 +7,19 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
   @runtime_tick_ms 1_000
+  @runtime_health_fresh_seconds 120
+  @runtime_health_stale_seconds 600
+  @update_preview_char_limit 140
+
+  @toggleable_columns [
+    %{id: "runtime_health", label: "Runtime health"},
+    %{id: "runtime", label: "Runtime"},
+    %{id: "agent", label: "Agent"},
+    %{id: "tokens", label: "Tokens"},
+    %{id: "update", label: "Latest update"}
+  ]
+
+  @default_visible MapSet.new(["runtime_health", "runtime", "agent", "tokens", "update"])
 
   @impl true
   def mount(_params, _session, socket) do
@@ -14,6 +27,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
       socket
       |> assign(:payload, load_payload())
       |> assign(:now, DateTime.utc_now())
+      |> assign(:visible_columns, @default_visible)
+      |> assign(:toggleable_columns, @toggleable_columns)
+      |> assign(:column_menu_open, false)
 
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
@@ -35,6 +51,56 @@ defmodule SymphonyElixirWeb.DashboardLive do
      socket
      |> assign(:payload, load_payload())
      |> assign(:now, DateTime.utc_now())}
+  end
+
+  @impl true
+  def handle_event("toggle-column", %{"column" => column_id}, socket) do
+    visible = socket.assigns.visible_columns
+
+    updated =
+      if MapSet.member?(visible, column_id) do
+        MapSet.delete(visible, column_id)
+      else
+        MapSet.put(visible, column_id)
+      end
+
+    {:noreply,
+     socket
+     |> assign(:visible_columns, updated)
+     |> push_event("store-column-prefs", %{visible: MapSet.to_list(updated)})}
+  end
+
+  @impl true
+  def handle_event("reset-columns", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:visible_columns, @default_visible)
+     |> push_event("store-column-prefs", %{visible: MapSet.to_list(@default_visible)})}
+  end
+
+  @impl true
+  def handle_event("restore-column-prefs", %{"visible" => visible_list}, socket)
+      when is_list(visible_list) do
+    valid_ids = MapSet.new(@toggleable_columns, & &1.id)
+
+    restored =
+      visible_list
+      |> Enum.filter(&MapSet.member?(valid_ids, &1))
+      |> MapSet.new()
+
+    {:noreply, assign(socket, :visible_columns, restored)}
+  end
+
+  def handle_event("restore-column-prefs", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("toggle-column-menu", _params, socket) do
+    {:noreply, assign(socket, :column_menu_open, not socket.assigns.column_menu_open)}
+  end
+
+  @impl true
+  def handle_event("close-column-menu", _params, socket) do
+    {:noreply, assign(socket, :column_menu_open, false)}
   end
 
   @impl true
@@ -122,11 +188,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <% else %>
             <div class="task-card-grid">
               <article :for={entry <- @payload.running} class="task-card">
+                <% update = update_payload(entry) %>
+                <% runtime_health = runtime_health_status(entry, @now) %>
                 <div class="task-card-header">
                   <div class="task-card-id-row">
                     <span class="task-card-id"><%= entry.issue_identifier %></span>
                     <span class={state_badge_class(entry.state)}>
                       <%= entry.state %>
+                    </span>
+                    <span class={runtime_health_badge_class(runtime_health)}>
+                      <%= runtime_health_label(runtime_health) %>
                     </span>
                   </div>
                   <span class={"task-card-priority #{priority_class(entry.priority)}"}>
@@ -135,19 +206,54 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 </div>
 
                 <h3 class="task-card-title"><%= entry[:title] || entry.issue_identifier %></h3>
+                <p class="task-card-owner muted">
+                  Assignee · <span class="mono"><%= assignee_label(entry[:assignee_id]) %></span>
+                </p>
 
-                <div class="task-card-meta">
-                  <span class="task-card-meta-item">
-                    <span class="task-card-meta-label">Assignee</span>
-                    <span class="task-card-meta-value mono"><%= assignee_label(entry[:assignee_id]) %></span>
-                  </span>
-                  <span class="task-card-meta-item">
-                    <span class="task-card-meta-label">Updated</span>
-                    <span class="task-card-meta-value mono"><%= format_relative_time(entry[:updated_at] || entry[:started_at], @now) %></span>
-                  </span>
-                  <span class="task-card-meta-item">
-                    <span class="task-card-meta-label">Runtime</span>
-                    <span class="task-card-meta-value numeric"><%= format_runtime_seconds(runtime_seconds_from_started_at(entry.started_at, @now)) %></span>
+                <div class="task-card-meta-groups">
+                  <section class="meta-group">
+                    <p class="meta-group-label">Runtime</p>
+                    <div class="meta-group-values">
+                      <span class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></span>
+                      <span class="muted">Profile · <%= runtime_label(entry.runtime) %></span>
+                      <span class="muted">Updated · <%= format_relative_time(entry[:updated_at] || entry[:started_at], @now) %></span>
+                    </div>
+                  </section>
+
+                  <section class="meta-group">
+                    <p class="meta-group-label">Tokens</p>
+                    <div class="meta-group-values numeric">
+                      <span>Total · <%= format_int(entry.tokens.total_tokens) %></span>
+                      <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
+                    </div>
+                  </section>
+
+                  <section class="meta-group">
+                    <p class="meta-group-label">Agent</p>
+                    <div class="meta-group-values">
+                      <span class={agent_badge_class(agent_field(entry.agent, :engine))}>
+                        <%= display_agent_engine(agent_field(entry.agent, :engine)) %>
+                      </span>
+                      <span class="muted">provider · <span class="mono"><%= display_or_na(agent_field(entry.agent, :provider)) %></span></span>
+                      <span class="muted">model · <span class="mono"><%= display_or_na(agent_field(entry.agent, :model)) %></span></span>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="task-card-update">
+                  <p class="task-card-update-label muted">Latest update</p>
+                  <span class="event-text muted" title={update.full}><%= update.preview %></span>
+                  <%= if update.truncated? do %>
+                    <details class="update-disclosure">
+                      <summary>View full update</summary>
+                      <p class="update-disclosure-body mono"><%= update.full %></p>
+                    </details>
+                  <% end %>
+                  <span class="muted event-meta">
+                    <%= entry.last_event || "n/a" %>
+                    <%= if entry.last_event_at do %>
+                      · <%= format_relative_time(entry.last_event_at, @now) %>
+                    <% end %>
                   </span>
                 </div>
 
@@ -179,11 +285,43 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <pre class="code-panel"><%= pretty_value(@payload.rate_limits) %></pre>
         </section>
 
-        <section class="section-card">
+        <section class="section-card" id="running-sessions" phx-hook="ColumnPrefs">
           <div class="section-header">
             <div>
               <h2 class="section-title">Running sessions</h2>
               <p class="section-copy">Active issues, last known agent activity, and token usage.</p>
+            </div>
+            <div class="column-prefs-controls">
+              <button
+                type="button"
+                class="subtle-button"
+                phx-click="toggle-column-menu"
+              >
+                Columns
+              </button>
+              <%= if @column_menu_open do %>
+                <div class="column-prefs-menu" phx-click-away="close-column-menu">
+                  <p class="column-prefs-heading">Toggle columns</p>
+                  <%= for col <- @toggleable_columns do %>
+                    <label class="column-prefs-item">
+                      <input
+                        type="checkbox"
+                        checked={MapSet.member?(@visible_columns, col.id)}
+                        phx-click="toggle-column"
+                        phx-value-column={col.id}
+                      />
+                      <span><%= col.label %></span>
+                    </label>
+                  <% end %>
+                  <button
+                    type="button"
+                    class="column-prefs-reset"
+                    phx-click="reset-columns"
+                  >
+                    Reset to defaults
+                  </button>
+                </div>
+              <% end %>
             </div>
           </div>
 
@@ -193,27 +331,24 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <div class="table-wrap">
               <table class="data-table data-table-running">
                 <colgroup>
-                  <col style="width: 12rem;" />
+                  <col style="width: 16rem;" />
                   <col style="width: 8rem;" />
-                  <col style="width: 7.5rem;" />
-                  <col style="width: 7.5rem;" />
-                  <col style="width: 8.5rem;" />
-                  <col style="width: 12rem;" />
-                  <col />
-                  <col style="width: 10rem;" />
+                  <%= if col_visible?(@visible_columns, "runtime_health") do %><col style="width: 8.5rem;" /><% end %>
+                  <%= if col_visible?(@visible_columns, "runtime") do %><col style="width: 14rem;" /><% end %>
+                  <%= if col_visible?(@visible_columns, "agent") do %><col style="width: 13rem;" /><% end %>
+                  <%= if col_visible?(@visible_columns, "tokens") do %><col style="width: 10rem;" /><% end %>
+                  <%= if col_visible?(@visible_columns, "update") do %><col /><% end %>
                 </colgroup>
                 <thead>
                   <tr>
                     <th>Issue</th>
                     <th>Priority</th>
                     <th>State</th>
-                    <th>Assignee</th>
-                    <th>Session</th>
-                    <th>Runtime</th>
-                    <th>Runtime / turns</th>
-                    <th>Agent runtime</th>
-                    <th>Codex update</th>
-                    <th>Tokens</th>
+                    <%= if col_visible?(@visible_columns, "runtime_health") do %><th>Runtime health</th><% end %>
+                    <%= if col_visible?(@visible_columns, "runtime") do %><th>Runtime</th><% end %>
+                    <%= if col_visible?(@visible_columns, "agent") do %><th>Agent</th><% end %>
+                    <%= if col_visible?(@visible_columns, "tokens") do %><th>Tokens</th><% end %>
+                    <%= if col_visible?(@visible_columns, "update") do %><th>Latest update</th><% end %>
                   </tr>
                 </thead>
                 <tbody>
@@ -221,6 +356,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
+                        <span class="issue-title"><%= entry[:title] || "Untitled issue" %></span>
                         <a class="issue-link" href={entry.url || "#"} target="_blank" rel="noopener">Linear</a>
                         <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON</a>
                         <span :if={entry.branch_name} class="branch-name"><%= entry.branch_name %></span>
@@ -236,65 +372,78 @@ defmodule SymphonyElixirWeb.DashboardLive do
                         <%= entry.state %>
                       </span>
                     </td>
-                    <td>
-                      <span class="assignee-name"><%= entry.assignee || "Unassigned" %></span>
-                    </td>
-                    <td>
-                      <div class="session-stack">
-                        <%= if entry.session_id do %>
-                          <button
-                            type="button"
-                            class="subtle-button"
-                            data-label="Copy ID"
-                            data-copy={entry.session_id}
-                            onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);"
-                          >
-                            Copy ID
-                          </button>
-                        <% else %>
-                          <span class="muted">n/a</span>
-                        <% end %>
-                      </div>
-                    </td>
-                    <td>
-                      <span class="state-badge">
-                        <%= runtime_label(entry.runtime) %>
-                      </span>
-                    </td>
-                    <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
-                    <td>
-                      <div class="agent-stack">
-                        <span class={agent_badge_class(agent_field(entry.agent, :engine))}>
-                          <%= display_agent_engine(agent_field(entry.agent, :engine)) %>
+                    <%= if col_visible?(@visible_columns, "runtime_health") do %>
+                      <td>
+                        <% runtime_health = runtime_health_status(entry, @now) %>
+                        <span class={runtime_health_badge_class(runtime_health)}>
+                          <%= runtime_health_label(runtime_health) %>
                         </span>
-                        <span class="muted event-meta">
-                          model · <span class="mono"><%= display_or_na(agent_field(entry.agent, :model)) %></span>
-                        </span>
-                        <span class="muted event-meta">
-                          provider · <span class="mono"><%= display_or_na(agent_field(entry.agent, :provider)) %></span>
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="detail-stack">
-                        <span
-                          class="event-text"
-                          title={entry.last_message || to_string(entry.last_event || "n/a")}
-                        ><%= entry.last_message || to_string(entry.last_event || "n/a") %></span>
-                        <span class="muted event-meta">
-                          <%= entry.last_event || "n/a" %>
-                          <%= if entry.last_event_at do %>
-                            · <span class="mono numeric"><%= entry.last_event_at %></span>
+                      </td>
+                    <% end %>
+                    <%= if col_visible?(@visible_columns, "runtime") do %>
+                      <td>
+                        <div class="session-stack metadata-stack">
+                          <span class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></span>
+                          <span class="muted">Profile · <%= runtime_label(entry.runtime) %></span>
+                          <%= if entry.session_id do %>
+                            <button
+                              type="button"
+                              class="subtle-button"
+                              data-label="Copy ID"
+                              data-copy={entry.session_id}
+                              onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);"
+                            >
+                              Copy ID
+                            </button>
+                          <% else %>
+                            <span class="muted">n/a</span>
                           <% end %>
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="token-stack numeric">
-                        <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
-                        <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
-                      </div>
-                    </td>
+                        </div>
+                      </td>
+                    <% end %>
+                    <%= if col_visible?(@visible_columns, "agent") do %>
+                      <td>
+                        <div class="agent-stack metadata-stack">
+                          <span class={agent_badge_class(agent_field(entry.agent, :engine))}>
+                            <%= display_agent_engine(agent_field(entry.agent, :engine)) %>
+                          </span>
+                          <span class="muted event-meta">
+                            model · <span class="mono"><%= display_or_na(agent_field(entry.agent, :model)) %></span>
+                          </span>
+                          <span class="muted event-meta">
+                            provider · <span class="mono"><%= display_or_na(agent_field(entry.agent, :provider)) %></span>
+                          </span>
+                        </div>
+                      </td>
+                    <% end %>
+                    <%= if col_visible?(@visible_columns, "tokens") do %>
+                      <td>
+                        <div class="token-stack numeric">
+                          <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
+                          <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
+                        </div>
+                      </td>
+                    <% end %>
+                    <%= if col_visible?(@visible_columns, "update") do %>
+                      <td>
+                        <% update = update_payload(entry) %>
+                        <div class="detail-stack update-stack">
+                          <span class="event-text muted" title={update.full}><%= update.preview %></span>
+                          <%= if update.truncated? do %>
+                            <details class="update-disclosure">
+                              <summary>View full update</summary>
+                              <p class="update-disclosure-body mono"><%= update.full %></p>
+                            </details>
+                          <% end %>
+                          <span class="muted event-meta">
+                            <%= entry.last_event || "n/a" %>
+                            <%= if entry.last_event_at do %>
+                              · <%= format_relative_time(entry.last_event_at, @now) %>
+                            <% end %>
+                          </span>
+                        </div>
+                      </td>
+                    <% end %>
                   </tr>
                 </tbody>
               </table>
@@ -343,6 +492,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
       <% end %>
     </section>
     """
+  end
+
+  defp col_visible?(visible_columns, column_id) do
+    MapSet.member?(visible_columns, column_id)
   end
 
   defp load_payload do
@@ -457,6 +610,86 @@ defmodule SymphonyElixirWeb.DashboardLive do
       true -> "#{div(diff, 86_400)}d ago"
     end
   end
+
+  defp update_payload(entry) do
+    full =
+      case entry.last_message do
+        value when is_binary(value) ->
+          case String.trim(value) do
+            "" -> display_or_na(entry.last_event)
+            trimmed -> trimmed
+          end
+
+        _ ->
+          display_or_na(entry.last_event)
+      end
+
+    {preview, truncated?} = truncate_copy(full, @update_preview_char_limit)
+    %{full: full, preview: preview, truncated?: truncated?}
+  end
+
+  defp truncate_copy(text, limit) when is_binary(text) and is_integer(limit) and limit > 1 do
+    if String.length(text) > limit do
+      {String.slice(text, 0, limit - 1) <> "…", true}
+    else
+      {text, false}
+    end
+  end
+
+  defp truncate_copy(text, _limit), do: {to_string(text), false}
+
+  defp runtime_health_status(entry, now) do
+    state = entry.state |> to_string() |> String.downcase()
+
+    cond do
+      String.contains?(state, ["blocked", "error", "failed"]) ->
+        :critical
+
+      String.contains?(state, ["queued", "pending", "retry"]) ->
+        :watch
+
+      true ->
+        case seconds_since(entry.last_event_at, now) do
+          nil -> :unknown
+          seconds when seconds <= @runtime_health_fresh_seconds -> :healthy
+          seconds when seconds <= @runtime_health_stale_seconds -> :watch
+          _ -> :stale
+        end
+    end
+  end
+
+  defp runtime_health_label(:healthy), do: "Healthy"
+  defp runtime_health_label(:watch), do: "Watch"
+  defp runtime_health_label(:stale), do: "Stale"
+  defp runtime_health_label(:critical), do: "Blocked"
+  defp runtime_health_label(:unknown), do: "Unknown"
+
+  defp runtime_health_badge_class(status) do
+    base = "runtime-health-badge"
+
+    case status do
+      :healthy -> "#{base} runtime-health-badge-healthy"
+      :watch -> "#{base} runtime-health-badge-watch"
+      :stale -> "#{base} runtime-health-badge-stale"
+      :critical -> "#{base} runtime-health-badge-critical"
+      _ -> "#{base} runtime-health-badge-unknown"
+    end
+  end
+
+  defp seconds_since(nil, _now), do: nil
+
+  defp seconds_since(%DateTime{} = time, %DateTime{} = now) do
+    max(DateTime.diff(now, time, :second), 0)
+  end
+
+  defp seconds_since(time, %DateTime{} = now) when is_binary(time) do
+    case DateTime.from_iso8601(time) do
+      {:ok, parsed, _offset} -> seconds_since(parsed, now)
+      _ -> nil
+    end
+  end
+
+  defp seconds_since(_time, _now), do: nil
 
   defp display_or_na(value) when is_binary(value) do
     trimmed = String.trim(value)
