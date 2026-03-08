@@ -532,18 +532,6 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp priority_badge_class(_priority), do: "priority-badge priority-badge-none"
 
-  defp priority_label(priority) when is_integer(priority) and priority in 1..4 do
-    case priority do
-      1 -> "Urgent"
-      2 -> "High"
-      3 -> "Medium"
-      4 -> "Low"
-      _ -> to_string(priority)
-    end
-  end
-
-  defp priority_label(_priority), do: "None"
-
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
   end
