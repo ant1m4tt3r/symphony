@@ -17,6 +17,21 @@ defmodule SymphonyElixir.Linear.Client do
   @default_rate_limit_backoff_ms 1_000
   @default_rate_limit_backoff_cap_ms 30_000
   @circuit_table :symphony_linear_client_circuit_breaker
+  @http_retry_after_regex ~r/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/
+  @http_retry_after_months %{
+    "Jan" => 1,
+    "Feb" => 2,
+    "Mar" => 3,
+    "Apr" => 4,
+    "May" => 5,
+    "Jun" => 6,
+    "Jul" => 7,
+    "Aug" => 8,
+    "Sep" => 9,
+    "Oct" => 10,
+    "Nov" => 11,
+    "Dec" => 12
+  }
   @transient_request_reasons MapSet.new([
                                :timeout,
                                :connect_timeout,
@@ -214,10 +229,6 @@ defmodule SymphonyElixir.Linear.Client do
           {:error, {:linear_api_request, reason}} = error ->
             Logger.error("Linear GraphQL request failed: #{inspect(reason)}" <> resilience_log_context(%{}))
             error
-
-          {:error, {:linear_api_status, status}} = error ->
-            Logger.error("Linear GraphQL request failed status=#{status}" <> resilience_log_context(%{}))
-            error
         end
 
       {:error, reason} ->
@@ -403,11 +414,36 @@ defmodule SymphonyElixir.Linear.Client do
       retry_attempts: non_negative_integer_option(opts, :retry_attempts, @default_retry_attempts),
       retry_base_delay_ms: positive_integer_option(opts, :retry_base_delay_ms, @default_retry_base_delay_ms),
       retry_max_delay_ms: positive_integer_option(opts, :retry_max_delay_ms, @default_retry_max_delay_ms),
-      circuit_failure_threshold: positive_integer_option(opts, :circuit_failure_threshold, @default_circuit_failure_threshold),
-      circuit_cooldown_ms: positive_integer_option(opts, :circuit_cooldown_ms, @default_circuit_cooldown_ms),
-      rate_limit_low_remaining: positive_integer_option(opts, :rate_limit_low_remaining, @default_rate_limit_low_remaining),
-      rate_limit_backoff_ms: positive_integer_option(opts, :rate_limit_backoff_ms, @default_rate_limit_backoff_ms),
-      rate_limit_backoff_cap_ms: positive_integer_option(opts, :rate_limit_backoff_cap_ms, @default_rate_limit_backoff_cap_ms),
+      circuit_failure_threshold:
+        positive_integer_option(
+          opts,
+          :circuit_failure_threshold,
+          @default_circuit_failure_threshold
+        ),
+      circuit_cooldown_ms:
+        positive_integer_option(
+          opts,
+          :circuit_cooldown_ms,
+          @default_circuit_cooldown_ms
+        ),
+      rate_limit_low_remaining:
+        positive_integer_option(
+          opts,
+          :rate_limit_low_remaining,
+          @default_rate_limit_low_remaining
+        ),
+      rate_limit_backoff_ms:
+        positive_integer_option(
+          opts,
+          :rate_limit_backoff_ms,
+          @default_rate_limit_backoff_ms
+        ),
+      rate_limit_backoff_cap_ms:
+        positive_integer_option(
+          opts,
+          :rate_limit_backoff_cap_ms,
+          @default_rate_limit_backoff_cap_ms
+        ),
       sleep_fun: Keyword.get(opts, :sleep_fun, &Process.sleep/1),
       monotonic_time_fun: Keyword.get(opts, :monotonic_time_fun, fn -> System.monotonic_time(:millisecond) end),
       wall_clock_fun: Keyword.get(opts, :wall_clock_fun, &DateTime.utc_now/0)
@@ -466,133 +502,182 @@ defmodule SymphonyElixir.Linear.Client do
     do_perform_graphql_with_retries(payload, headers, request_fun, resilience, 1, max_attempts, nil)
   end
 
-  defp do_perform_graphql_with_retries(payload, headers, request_fun, resilience, attempt, max_attempts, last_delay_ms) do
+  defp do_perform_graphql_with_retries(
+         payload,
+         headers,
+         request_fun,
+         resilience,
+         attempt,
+         max_attempts,
+         last_delay_ms
+       ) do
     case request_fun.(payload, headers) do
       {:ok, raw_response} ->
         response = normalize_response(raw_response)
         status = Map.get(response, :status)
         retry_after_ms = extract_retry_after_ms(response, resilience)
 
-        cond do
-          status == 200 ->
-            retry_metadata = %{
-              attempt: attempt,
-              max_attempts: max_attempts,
-              retries: attempt - 1,
-              exhausted: false,
-              last_delay_ms: last_delay_ms,
-              retry_after_ms: retry_after_ms
-            }
+        response_context = %{
+          payload: payload,
+          headers: headers,
+          request_fun: request_fun,
+          resilience: resilience,
+          attempt: attempt,
+          max_attempts: max_attempts,
+          last_delay_ms: last_delay_ms,
+          retry_after_ms: retry_after_ms
+        }
 
-            {:ok, response, retry_metadata}
-
-          transient_status?(status) and attempt < max_attempts ->
-            delay_ms = retry_delay_ms(attempt, retry_after_ms, resilience)
-
-            Logger.warning(
-              "Linear GraphQL transient status; scheduling retry" <>
-                resilience_log_context(%{
-                  retry: %{
-                    attempt: attempt,
-                    max_attempts: max_attempts,
-                    retries: attempt,
-                    exhausted: false,
-                    last_delay_ms: delay_ms,
-                    retry_after_ms: retry_after_ms
-                  },
-                  status: status
-                })
-            )
-
-            resilience.sleep_fun.(delay_ms)
-
-            do_perform_graphql_with_retries(
-              payload,
-              headers,
-              request_fun,
-              resilience,
-              attempt + 1,
-              max_attempts,
-              delay_ms
-            )
-
-          transient_status?(status) ->
-            circuit = record_circuit_failure(resilience)
-
-            metadata = %{
-              retry: %{
-                attempt: attempt,
-                max_attempts: max_attempts,
-                retries: max(attempt - 1, 0),
-                exhausted: true,
-                last_delay_ms: last_delay_ms,
-                retry_after_ms: retry_after_ms
-              },
-              circuit: circuit,
-              rate_limits: extract_rate_limit_headers(response, resilience),
-              response_body: Map.get(response, :body)
-            }
-
-            {:error, {:linear_api_status, status, metadata}}
-
-          is_integer(status) ->
-            :ok = clear_circuit_failures(resilience)
-            {:error, {:linear_api_status_response, status, response}}
-
-          true ->
-            {:error, {:linear_api_request, {:invalid_linear_response, response}}}
-        end
+        handle_graphql_response(status, response, response_context)
 
       {:error, reason} ->
-        if transient_request_error?(reason) and attempt < max_attempts do
-          delay_ms = retry_delay_ms(attempt, nil, resilience)
-
-          Logger.warning(
-            "Linear GraphQL transport failure; scheduling retry" <>
-              resilience_log_context(%{
-                retry: %{
-                  attempt: attempt,
-                  max_attempts: max_attempts,
-                  retries: attempt,
-                  exhausted: false,
-                  last_delay_ms: delay_ms
-                },
-                request_reason: inspect(reason)
-              })
-          )
-
-          resilience.sleep_fun.(delay_ms)
-
-          do_perform_graphql_with_retries(
-            payload,
-            headers,
-            request_fun,
-            resilience,
-            attempt + 1,
-            max_attempts,
-            delay_ms
-          )
-        else
-          if transient_request_error?(reason) do
-            circuit = record_circuit_failure(resilience)
-
-            metadata = %{
-              retry: %{
-                attempt: attempt,
-                max_attempts: max_attempts,
-                retries: max(attempt - 1, 0),
-                exhausted: true,
-                last_delay_ms: last_delay_ms
-              },
-              circuit: circuit
-            }
-
-            {:error, {:linear_api_request, reason, metadata}}
-          else
-            {:error, {:linear_api_request, reason}}
-          end
-        end
+        handle_graphql_request_error(
+          reason,
+          payload,
+          headers,
+          request_fun,
+          resilience,
+          attempt,
+          max_attempts,
+          last_delay_ms
+        )
     end
+  end
+
+  defp handle_graphql_response(200, response, context) do
+    attempt = context.attempt
+    max_attempts = context.max_attempts
+    last_delay_ms = context.last_delay_ms
+    retry_after_ms = context.retry_after_ms
+
+    {:ok, response, retry_metadata(attempt, max_attempts, last_delay_ms, retry_after_ms, false)}
+  end
+
+  defp handle_graphql_response(status, response, context) when is_integer(status) do
+    resilience = context.resilience
+    attempt = context.attempt
+    max_attempts = context.max_attempts
+    retry_after_ms = context.retry_after_ms
+
+    cond do
+      transient_status?(status) and attempt < max_attempts ->
+        delay_ms = retry_delay_ms(attempt, retry_after_ms, resilience)
+        log_transient_status_retry(status, attempt, max_attempts, delay_ms, retry_after_ms)
+        resilience.sleep_fun.(delay_ms)
+        retry_graphql_request(context, delay_ms)
+
+      transient_status?(status) ->
+        circuit = record_circuit_failure(resilience)
+
+        metadata = %{
+          retry:
+            retry_metadata(
+              attempt,
+              max_attempts,
+              context.last_delay_ms,
+              retry_after_ms,
+              true
+            ),
+          circuit: circuit,
+          rate_limits: extract_rate_limit_headers(response, resilience),
+          response_body: Map.get(response, :body)
+        }
+
+        {:error, {:linear_api_status, status, metadata}}
+
+      true ->
+        :ok = clear_circuit_failures(resilience)
+        {:error, {:linear_api_status_response, status, response}}
+    end
+  end
+
+  defp handle_graphql_response(_status, response, _context) do
+    {:error, {:linear_api_request, {:invalid_linear_response, response}}}
+  end
+
+  defp retry_graphql_request(context, delay_ms) do
+    do_perform_graphql_with_retries(
+      context.payload,
+      context.headers,
+      context.request_fun,
+      context.resilience,
+      context.attempt + 1,
+      context.max_attempts,
+      delay_ms
+    )
+  end
+
+  defp handle_graphql_request_error(
+         reason,
+         payload,
+         headers,
+         request_fun,
+         resilience,
+         attempt,
+         max_attempts,
+         last_delay_ms
+       ) do
+    cond do
+      transient_request_error?(reason) and attempt < max_attempts ->
+        delay_ms = retry_delay_ms(attempt, nil, resilience)
+        log_transient_request_retry(reason, attempt, max_attempts, delay_ms)
+        resilience.sleep_fun.(delay_ms)
+
+        do_perform_graphql_with_retries(
+          payload,
+          headers,
+          request_fun,
+          resilience,
+          attempt + 1,
+          max_attempts,
+          delay_ms
+        )
+
+      transient_request_error?(reason) ->
+        circuit = record_circuit_failure(resilience)
+
+        metadata = %{
+          retry: retry_metadata(attempt, max_attempts, last_delay_ms, nil, true),
+          circuit: circuit
+        }
+
+        {:error, {:linear_api_request, reason, metadata}}
+
+      true ->
+        {:error, {:linear_api_request, reason}}
+    end
+  end
+
+  defp retry_metadata(attempt, max_attempts, last_delay_ms, retry_after_ms, exhausted?) do
+    %{
+      attempt: attempt,
+      max_attempts: max_attempts,
+      retries: max(attempt - 1, 0),
+      exhausted: exhausted?,
+      last_delay_ms: last_delay_ms,
+      retry_after_ms: retry_after_ms
+    }
+    |> compact_map()
+  end
+
+  defp log_transient_status_retry(status, attempt, max_attempts, delay_ms, retry_after_ms) do
+    Logger.warning(
+      "Linear GraphQL transient status; scheduling retry" <>
+        resilience_log_context(%{
+          retry: retry_metadata(attempt + 1, max_attempts, delay_ms, retry_after_ms, false),
+          status: status
+        })
+    )
+  end
+
+  defp log_transient_request_retry(reason, attempt, max_attempts, delay_ms) do
+    Logger.warning(
+      "Linear GraphQL transport failure; scheduling retry" <>
+        resilience_log_context(%{
+          retry: retry_metadata(attempt + 1, max_attempts, delay_ms, nil, false),
+          request_reason: inspect(reason)
+        })
+    )
   end
 
   defp log_status_failure(payload, status, metadata) do
@@ -722,22 +807,24 @@ defmodule SymphonyElixir.Linear.Client do
   defp parse_retry_after_ms(_value, _resilience), do: nil
 
   defp parse_retry_after_http_date_ms(value, resilience) when is_binary(value) do
-    case :httpd_util.convert_request_date(String.to_charlist(value)) do
-      {{year, month, day}, {hour, minute, second}} ->
-        with {:ok, date} <- Date.new(year, month, day),
-             {:ok, time} <- Time.new(hour, minute, second),
-             {:ok, datetime} <- DateTime.new(date, time, "Etc/UTC") do
-          now_ms =
-            resilience.wall_clock_fun.()
-            |> DateTime.to_unix(:millisecond)
+    with [_, day_raw, month_name, year_raw, hour_raw, minute_raw, second_raw] <-
+           Regex.run(@http_retry_after_regex, value),
+         day when is_integer(day) <- parse_integer_value(day_raw),
+         year when is_integer(year) <- parse_integer_value(year_raw),
+         hour when is_integer(hour) <- parse_integer_value(hour_raw),
+         minute when is_integer(minute) <- parse_integer_value(minute_raw),
+         second when is_integer(second) <- parse_integer_value(second_raw),
+         month when is_integer(month) <- Map.get(@http_retry_after_months, month_name),
+         {:ok, date} <- Date.new(year, month, day),
+         {:ok, time} <- Time.new(hour, minute, second),
+         {:ok, datetime} <- DateTime.new(date, time, "Etc/UTC") do
+      now_ms =
+        resilience.wall_clock_fun.()
+        |> DateTime.to_unix(:millisecond)
 
-          max(DateTime.to_unix(datetime, :millisecond) - now_ms, 0)
-        else
-          _ -> nil
-        end
-
-      _ ->
-        nil
+      max(DateTime.to_unix(datetime, :millisecond) - now_ms, 0)
+    else
+      _ -> nil
     end
   end
 
@@ -807,8 +894,6 @@ defmodule SymphonyElixir.Linear.Client do
   defp transient_status?(status) when is_integer(status) do
     status == 429 or (status >= 500 and status <= 599)
   end
-
-  defp transient_status?(_status), do: false
 
   defp transient_request_error?(%{reason: reason}), do: transient_request_error?(reason)
   defp transient_request_error?({reason, _}) when is_atom(reason), do: MapSet.member?(@transient_request_reasons, reason)
