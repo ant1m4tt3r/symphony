@@ -306,7 +306,7 @@ pre,
 
 .data-table-running {
   table-layout: fixed;
-  min-width: 1120px;
+  min-width: 1200px;
 }
 
 .data-table th {
@@ -439,6 +439,64 @@ pre,
   background: var(--danger-soft);
   border-color: #f6d3cf;
   color: var(--danger);
+}
+
+.priority-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.85rem;
+  padding: 0.3rem 0.68rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card-muted);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.priority-badge-urgent {
+  background: #fef3f2;
+  border-color: #f6d3cf;
+  color: #b42318;
+}
+
+.priority-badge-high {
+  background: #fff7e8;
+  border-color: #f1d8a6;
+  color: #b45309;
+}
+
+.priority-badge-medium {
+  background: var(--accent-soft);
+  border-color: rgba(16, 163, 127, 0.18);
+  color: var(--accent-ink);
+}
+
+.priority-badge-low {
+  background: #f5f5f7;
+  border-color: var(--line-strong);
+  color: var(--muted);
+}
+
+.priority-badge-none {
+  background: #f5f5f7;
+  border-color: var(--line-strong);
+  color: var(--muted);
+}
+
+.assignee-name {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.branch-name {
+  font-family: "Sohne Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: #f5f5f7;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
 }
 
 .runtime-health-badge {

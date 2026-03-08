@@ -352,6 +352,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "title" => nil,
                  "state" => "In Progress",
                  "priority" => nil,
+                 "assignee" => nil,
                  "url" => nil,
                  "assignee_id" => nil,
                  "updated_at" => nil,

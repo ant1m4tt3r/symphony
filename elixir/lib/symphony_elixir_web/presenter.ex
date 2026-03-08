@@ -114,6 +114,7 @@ defmodule SymphonyElixirWeb.Presenter do
       title: Map.get(entry, :title),
       state: entry.state,
       priority: Map.get(entry, :priority),
+      assignee: Map.get(entry, :assignee),
       url: Map.get(entry, :url),
       assignee_id: Map.get(entry, :assignee_id),
       updated_at: iso8601(Map.get(entry, :updated_at)),

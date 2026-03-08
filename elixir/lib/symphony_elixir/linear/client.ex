@@ -61,6 +61,7 @@ defmodule SymphonyElixir.Linear.Client do
         url
         assignee {
           id
+          name
         }
         labels {
           nodes {
@@ -106,6 +107,7 @@ defmodule SymphonyElixir.Linear.Client do
         url
         assignee {
           id
+          name
         }
         labels {
           nodes {
@@ -284,7 +286,13 @@ defmodule SymphonyElixir.Linear.Client do
     do_fetch_by_states_page(project_slug, state_names, assignee_filter, nil, [])
   end
 
-  defp do_fetch_by_states_page(project_slug, state_names, assignee_filter, after_cursor, acc_issues) do
+  defp do_fetch_by_states_page(
+         project_slug,
+         state_names,
+         assignee_filter,
+         after_cursor,
+         acc_issues
+       ) do
     with {:ok, body} <-
            graphql(@query, %{
              projectSlug: project_slug,
@@ -298,7 +306,13 @@ defmodule SymphonyElixir.Linear.Client do
 
       case next_page_cursor(page_info) do
         {:ok, next_cursor} ->
-          do_fetch_by_states_page(project_slug, state_names, assignee_filter, next_cursor, updated_acc)
+          do_fetch_by_states_page(
+            project_slug,
+            state_names,
+            assignee_filter,
+            next_cursor,
+            updated_acc
+          )
 
         :done ->
           {:ok, finalize_paginated_issues(updated_acc)}
@@ -313,7 +327,8 @@ defmodule SymphonyElixir.Linear.Client do
     Enum.reverse(issues, acc_issues)
   end
 
-  defp finalize_paginated_issues(acc_issues) when is_list(acc_issues), do: Enum.reverse(acc_issues)
+  defp finalize_paginated_issues(acc_issues) when is_list(acc_issues),
+    do: Enum.reverse(acc_issues)
 
   defp do_fetch_issue_states(ids, assignee_filter) do
     case graphql(@query_by_ids, %{
@@ -1024,12 +1039,17 @@ defmodule SymphonyElixir.Linear.Client do
          },
          assignee_filter
        ) do
-    with {:ok, issues} <- decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
+    with {:ok, issues} <-
+           decode_linear_response(
+             %{"data" => %{"issues" => %{"nodes" => nodes}}},
+             assignee_filter
+           ) do
       {:ok, issues, %{has_next_page: has_next_page == true, end_cursor: end_cursor}}
     end
   end
 
-  defp decode_linear_page_response(response, assignee_filter), do: decode_linear_response(response, assignee_filter)
+  defp decode_linear_page_response(response, assignee_filter),
+    do: decode_linear_response(response, assignee_filter)
 
   defp next_page_cursor(%{has_next_page: true, end_cursor: end_cursor})
        when is_binary(end_cursor) and byte_size(end_cursor) > 0 do
@@ -1052,6 +1072,7 @@ defmodule SymphonyElixir.Linear.Client do
       branch_name: issue["branchName"],
       url: issue["url"],
       assignee_id: assignee_field(assignee, "id"),
+      assignee_name: assignee_field(assignee, "name"),
       blocked_by: extract_blockers(issue),
       labels: extract_labels(issue),
       assigned_to_worker: assigned_to_worker?(assignee, assignee_filter),

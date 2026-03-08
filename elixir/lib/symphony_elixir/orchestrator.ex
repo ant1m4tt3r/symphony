@@ -661,12 +661,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_issue(%State{} = state, issue, attempt \\ nil) do
-    case revalidate_issue_for_dispatch(issue, &Tracker.fetch_issue_states_by_ids/1, terminal_state_set()) do
+    case revalidate_issue_for_dispatch(
+           issue,
+           &Tracker.fetch_issue_states_by_ids/1,
+           terminal_state_set()
+         ) do
       {:ok, %Issue{} = refreshed_issue} ->
         do_dispatch_issue(state, refreshed_issue, attempt)
 
       {:skip, :missing} ->
         Logger.info("Skipping dispatch; issue no longer active or visible: #{issue_context(issue)}")
+
         state
 
       {:skip, %Issue{} = refreshed_issue} ->
@@ -676,6 +681,7 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.warning("Skipping dispatch; issue refresh failed for #{issue_context(issue)}: #{inspect(reason)}")
+
         state
     end
   end
@@ -1035,6 +1041,7 @@ defmodule SymphonyElixir.Orchestrator do
           title: metadata.issue.title,
           state: metadata.issue.state,
           priority: metadata.issue.priority,
+          assignee: metadata.issue.assignee_name,
           url: metadata.issue.url,
           assignee_id: metadata.issue.assignee_id,
           updated_at: metadata.issue.updated_at,

@@ -349,6 +349,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 <thead>
                   <tr>
                     <th>Issue</th>
+                    <th>Priority</th>
                     <th>State</th>
                     <%= if col_visible?(@visible_columns, "last_update") do %><th>Last update</th><% end %>
                     <%= if col_visible?(@visible_columns, "runtime_health") do %><th>Stream health</th><% end %>
@@ -364,8 +365,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
                         <span class="issue-title"><%= entry[:title] || "Untitled issue" %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                        <a class="issue-link" href={entry.url || "#"} target="_blank" rel="noopener">Linear</a>
+                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON</a>
+                        <span :if={entry.branch_name} class="branch-name"><%= entry.branch_name %></span>
                       </div>
+                    </td>
+                    <td>
+                      <span class={priority_badge_class(entry.priority)}>
+                        <%= priority_label(entry.priority) %>
+                      </span>
                     </td>
                     <td>
                       <span class={state_badge_class(entry.state)}>
@@ -755,6 +763,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
         base
     end
   end
+
+  defp priority_badge_class(priority) when is_integer(priority) and priority in 1..4 do
+    case priority do
+      1 -> "priority-badge priority-badge-urgent"
+      2 -> "priority-badge priority-badge-high"
+      3 -> "priority-badge priority-badge-medium"
+      4 -> "priority-badge priority-badge-low"
+      _ -> "priority-badge"
+    end
+  end
+
+  defp priority_badge_class(_priority), do: "priority-badge priority-badge-none"
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
