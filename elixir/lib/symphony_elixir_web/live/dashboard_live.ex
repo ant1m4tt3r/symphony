@@ -14,6 +14,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
       socket
       |> assign(:payload, load_payload())
       |> assign(:now, DateTime.utc_now())
+      |> assign(:expanded_session, nil)
 
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
@@ -36,6 +37,21 @@ defmodule SymphonyElixirWeb.DashboardLive do
      |> assign(:payload, load_payload())
      |> assign(:now, DateTime.utc_now())}
   end
+
+  @impl true
+  def handle_event("toggle_detail", %{"id" => issue_identifier}, socket) do
+    expanded =
+      if socket.assigns.expanded_session == issue_identifier do
+        nil
+      else
+        issue_identifier
+      end
+
+    {:noreply, assign(socket, :expanded_session, expanded)}
+  end
+
+  @impl true
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
 
   @impl true
   def render(assigns) do
@@ -215,75 +231,135 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   </tr>
                 </thead>
                 <tbody>
-                  <tr :for={entry <- @payload.running}>
-                    <td>
-                      <div class="issue-stack">
-                        <span class="issue-id"><%= entry.issue_identifier %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
-                      </div>
-                    </td>
-                    <td>
-                      <span class={state_badge_class(entry.state)}>
-                        <%= entry.state %>
-                      </span>
-                    </td>
-                    <td>
-                      <div class="session-stack">
-                        <%= if entry.session_id do %>
-                          <button
-                            type="button"
-                            class="subtle-button"
-                            data-label="Copy ID"
-                            data-copy={entry.session_id}
-                            onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);"
-                          >
-                            Copy ID
-                          </button>
-                        <% else %>
-                          <span class="muted">n/a</span>
-                        <% end %>
-                      </div>
-                    </td>
-                    <td>
-                      <span class="state-badge">
-                        <%= runtime_label(entry.runtime) %>
-                      </span>
-                    </td>
-                    <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
-                    <td>
-                      <div class="agent-stack">
-                        <span class={agent_badge_class(agent_field(entry.agent, :engine))}>
-                          <%= display_agent_engine(agent_field(entry.agent, :engine)) %>
+                  <%= for entry <- @payload.running do %>
+                    <tr
+                      class={"session-row #{if @expanded_session == entry.issue_identifier, do: "session-row-expanded", else: ""}"}
+                      phx-click="toggle_detail"
+                      phx-value-id={entry.issue_identifier}
+                      style="cursor: pointer;"
+                    >
+                      <td>
+                        <div class="issue-stack">
+                          <span class="issue-id"><%= entry.issue_identifier %></span>
+                          <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"} phx-click="noop" onclick="event.stopPropagation();">JSON details</a>
+                        </div>
+                      </td>
+                      <td>
+                        <span class={state_badge_class(entry.state)}>
+                          <%= entry.state %>
                         </span>
-                        <span class="muted event-meta">
-                          model · <span class="mono"><%= display_or_na(agent_field(entry.agent, :model)) %></span>
-                        </span>
-                        <span class="muted event-meta">
-                          provider · <span class="mono"><%= display_or_na(agent_field(entry.agent, :provider)) %></span>
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="detail-stack">
-                        <span
-                          class="event-text"
-                          title={entry.last_message || to_string(entry.last_event || "n/a")}
-                        ><%= entry.last_message || to_string(entry.last_event || "n/a") %></span>
-                        <span class="muted event-meta">
-                          <%= entry.last_event || "n/a" %>
-                          <%= if entry.last_event_at do %>
-                            · <span class="mono numeric"><%= entry.last_event_at %></span>
+                      </td>
+                      <td>
+                        <div class="session-stack">
+                          <%= if entry.session_id do %>
+                            <button
+                              type="button"
+                              class="subtle-button"
+                              data-label="Copy ID"
+                              data-copy={entry.session_id}
+                              onclick="event.stopPropagation(); navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);"
+                            >
+                              Copy ID
+                            </button>
+                          <% else %>
+                            <span class="muted">n/a</span>
                           <% end %>
+                        </div>
+                      </td>
+                      <td>
+                        <span class="state-badge">
+                          <%= runtime_label(entry.runtime) %>
                         </span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="token-stack numeric">
-                        <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
-                        <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
+                      <td>
+                        <div class="agent-stack">
+                          <span class={agent_badge_class(agent_field(entry.agent, :engine))}>
+                            <%= display_agent_engine(agent_field(entry.agent, :engine)) %>
+                          </span>
+                          <span class="muted event-meta">
+                            model · <span class="mono"><%= display_or_na(agent_field(entry.agent, :model)) %></span>
+                          </span>
+                          <span class="muted event-meta">
+                            provider · <span class="mono"><%= display_or_na(agent_field(entry.agent, :provider)) %></span>
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="detail-stack">
+                          <span
+                            class="event-text"
+                            title={entry.last_message || to_string(entry.last_event || "n/a")}
+                          ><%= entry.last_message || to_string(entry.last_event || "n/a") %></span>
+                          <span class="muted event-meta">
+                            <%= entry.last_event || "n/a" %>
+                            <%= if entry.last_event_at do %>
+                              · <span class="mono numeric"><%= entry.last_event_at %></span>
+                            <% end %>
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="token-stack numeric">
+                          <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
+                          <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
+                        </div>
+                      </td>
+                    </tr>
+                    <%= if @expanded_session == entry.issue_identifier do %>
+                      <tr class="detail-panel-row">
+                        <td colspan="8">
+                          <div class="detail-panel">
+                            <div class="detail-panel-grid">
+                              <div class="detail-panel-field">
+                                <span class="detail-panel-label">Session ID</span>
+                                <span class="detail-panel-value mono"><%= entry.session_id || "n/a" %></span>
+                              </div>
+                              <div class="detail-panel-field">
+                                <span class="detail-panel-label">App-server PID</span>
+                                <span class="detail-panel-value mono"><%= entry.app_server_pid || "n/a" %></span>
+                              </div>
+                              <div class="detail-panel-field">
+                                <span class="detail-panel-label">Start time</span>
+                                <span class="detail-panel-value mono"><%= entry.started_at || "n/a" %></span>
+                              </div>
+                              <div class="detail-panel-field">
+                                <span class="detail-panel-label">Last event</span>
+                                <span class="detail-panel-value mono"><%= entry.last_event_at || "n/a" %></span>
+                              </div>
+                              <div class="detail-panel-field">
+                                <span class="detail-panel-label">Agent command</span>
+                                <span class="detail-panel-value mono"><%= display_or_na(agent_field(entry.agent, :command)) %></span>
+                              </div>
+                              <div class="detail-panel-field">
+                                <span class="detail-panel-label">Runtime</span>
+                                <span class="detail-panel-value">
+                                  <span class="mono"><%= runtime_label(entry.runtime) %></span>
+                                  <%= if entry.runtime[:source] do %>
+                                    <span class="muted"> · source: <%= entry.runtime.source %></span>
+                                  <% end %>
+                                  <%= if entry.runtime[:fallback_reason] do %>
+                                    <span class="muted"> · fallback: <%= entry.runtime.fallback_reason %></span>
+                                  <% end %>
+                                </span>
+                              </div>
+                            </div>
+                            <div class="detail-panel-links">
+                              <a class="detail-panel-link" href={"/api/v1/#{entry.issue_identifier}"} target="_blank" rel="noopener" onclick="event.stopPropagation();">
+                                JSON details
+                              </a>
+                              <%= if entry.workspace_path do %>
+                                <span class="detail-panel-field">
+                                  <span class="detail-panel-label">Workspace</span>
+                                  <span class="detail-panel-value mono detail-panel-path"><%= entry.workspace_path %></span>
+                                </span>
+                              <% end %>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    <% end %>
+                  <% end %>
                 </tbody>
               </table>
             </div>

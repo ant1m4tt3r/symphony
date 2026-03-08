@@ -634,6 +634,94 @@ pre,
   color: var(--ink);
 }
 
+/* Session detail panel */
+
+.session-row {
+  transition: background 140ms ease;
+}
+
+.session-row:hover {
+  background: var(--page-soft);
+}
+
+.session-row-expanded {
+  background: var(--page-soft);
+}
+
+.detail-panel-row td {
+  padding: 0 !important;
+  border-top: none !important;
+}
+
+.detail-panel {
+  margin: 0 0.5rem 0.9rem 0;
+  padding: 1rem 1.15rem;
+  background: #f5f5f7;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.detail-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.85rem;
+}
+
+.detail-panel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.detail-panel-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.detail-panel-value {
+  font-size: 0.88rem;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.detail-panel-path {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.detail-panel-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.detail-panel-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.32rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid rgba(16, 163, 127, 0.18);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.detail-panel-link:hover {
+  background: #d0f4e8;
+  border-color: rgba(16, 163, 127, 0.3);
+  color: var(--accent-ink);
+}
+
 @media (max-width: 860px) {
   .app-shell {
     padding: 1rem 0.85rem 2rem;
@@ -670,5 +758,15 @@ pre,
 
   .task-card {
     border-radius: 16px;
+  }
+
+  .detail-panel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-panel {
+    margin: 0 0 0.5rem 0;
+    padding: 0.75rem;
+    border-radius: 12px;
   }
 }

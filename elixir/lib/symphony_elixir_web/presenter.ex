@@ -123,7 +123,9 @@ defmodule SymphonyElixirWeb.Presenter do
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
         total_tokens: entry.codex_total_tokens
-      }
+      },
+      app_server_pid: format_pid(Map.get(entry, :codex_app_server_pid)),
+      workspace_path: workspace_path(entry.identifier)
     }
   end
 
@@ -208,4 +210,14 @@ defmodule SymphonyElixirWeb.Presenter do
   end
 
   defp iso8601(_datetime), do: nil
+
+  defp format_pid(pid) when is_binary(pid) and pid != "", do: pid
+  defp format_pid(pid) when is_integer(pid), do: Integer.to_string(pid)
+  defp format_pid(_pid), do: nil
+
+  defp workspace_path(identifier) when is_binary(identifier) do
+    Path.join(Config.workspace_root(), identifier)
+  end
+
+  defp workspace_path(_identifier), do: nil
 end

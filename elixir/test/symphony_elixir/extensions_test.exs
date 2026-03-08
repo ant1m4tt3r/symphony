@@ -374,7 +374,9 @@ defmodule SymphonyElixir.ExtensionsTest do
                    "provider" => "openai",
                    "model" => "openai/gpt-5"
                  },
-                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12},
+                 "app_server_pid" => nil,
+                 "workspace_path" => state_payload["running"] |> List.first() |> Map.fetch!("workspace_path")
                }
              ],
              "retrying" => [
