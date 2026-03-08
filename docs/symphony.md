@@ -81,7 +81,7 @@ Engine env vars:
 - `CODEX_COMMAND`: legacy alias still supported for backward compatibility.
 - `SYMPHONY_POLL_INTERVAL_MS`: tracker polling interval in milliseconds (default `2000`).
 - `SYMPHONY_MAX_TURNS`: max continuation turns per agent run (default `8`; lower means faster reaction to new comments/state updates).
-- `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls; default is blocked.
+- `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls and to opt out of the local `git merge`-to-`main` guard when explicitly needed; default is blocked.
   - This also enables `codex.allow_unsafe_merge_push: true` in generated workflow so app-server approval guardrails do not block merge commands.
 - Mixed routing options:
   - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (example `codex:3,opencode:2`).
@@ -171,4 +171,5 @@ To list project slugs from your Linear workspace:
 - By default, the `gh` wrapper blocks `gh pr merge` and GitHub API merge endpoints (`/pulls/<n>/merge`) and returns a hard error.
 - Set `SYMPHONY_ALLOW_AUTO_MERGE=1` to allow merge commands for this repository harness.
 - The `git` guard blocks direct pushes to `main` (including `HEAD:main` style refspecs), even if hooks are bypassed.
+- The `git` guard also blocks `git merge` while checked out on `main` by default and prints PR-flow remediation. Set `SYMPHONY_ALLOW_AUTO_MERGE=1` only when intentionally opting out locally.
 - Each Symphony workspace clone also installs a `pre-push` hook that blocks pushes to `refs/heads/main`.

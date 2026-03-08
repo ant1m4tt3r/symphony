@@ -97,9 +97,64 @@ assert_not_contains() {
 }
 
 git_missing_out="$TMP_DIR/git_missing.out"
-status="$(run_and_capture "$git_missing_out" "$GIT_WRAPPER" status)"
+status="$(run_and_capture "$git_missing_out" env -u SYMPHONY_REAL_GIT "$GIT_WRAPPER" status)"
 assert_exit 127 "$status" "git wrapper requires SYMPHONY_REAL_GIT"
 assert_contains "missing real git binary" "$git_missing_out" "git wrapper missing-binary error is actionable"
+
+git_merge_main_out="$TMP_DIR/git_merge_main.out"
+status="$(
+  run_and_capture \
+    "$git_merge_main_out" \
+    env \
+      SYMPHONY_ALLOW_AUTO_MERGE=0 \
+      SYMPHONY_REAL_GIT="$TMP_DIR/fake_git" \
+      FAKE_GIT_LOG="$FAKE_GIT_LOG" \
+      FAKE_GIT_BRANCH="main" \
+      "$GIT_WRAPPER" merge feature/hug-27
+)"
+assert_exit 44 "$status" "git wrapper blocks merge into main by default"
+assert_contains "blocked: merging into 'main' is disabled by default" "$git_merge_main_out" "git wrapper emits policy message for merge-to-main"
+assert_contains "Use the PR flow instead" "$git_merge_main_out" "git wrapper merge-to-main message includes PR flow remediation"
+
+git_merge_feature_out="$TMP_DIR/git_merge_feature.out"
+status="$(
+  run_and_capture \
+    "$git_merge_feature_out" \
+    env \
+      SYMPHONY_REAL_GIT="$TMP_DIR/fake_git" \
+      FAKE_GIT_LOG="$FAKE_GIT_LOG" \
+      FAKE_GIT_BRANCH="feature/hug-27" \
+      "$GIT_WRAPPER" merge origin/main
+)"
+assert_exit 0 "$status" "git wrapper allows merges when not on main"
+assert_not_contains "blocked: merging into 'main'" "$git_merge_feature_out" "feature-branch merge is not blocked"
+assert_contains "merge origin/main" "$FAKE_GIT_LOG" "git wrapper forwards allowed feature-branch merge to real git"
+
+git_merge_main_opt_out_out="$TMP_DIR/git_merge_main_opt_out.out"
+status="$(
+  run_and_capture \
+    "$git_merge_main_opt_out_out" \
+    env \
+      SYMPHONY_ALLOW_AUTO_MERGE=1 \
+      SYMPHONY_REAL_GIT="$TMP_DIR/fake_git" \
+      FAKE_GIT_LOG="$FAKE_GIT_LOG" \
+      FAKE_GIT_BRANCH="main" \
+      "$GIT_WRAPPER" merge feature/hug-27
+)"
+assert_exit 0 "$status" "git wrapper allows merge-to-main when explicit opt-out is enabled"
+assert_contains "merge feature/hug-27" "$FAKE_GIT_LOG" "git wrapper forwards merge-to-main under explicit opt-out"
+
+git_merge_abort_main_out="$TMP_DIR/git_merge_abort_main.out"
+status="$(
+  run_and_capture \
+    "$git_merge_abort_main_out" \
+    env \
+      SYMPHONY_REAL_GIT="$TMP_DIR/fake_git" \
+      FAKE_GIT_LOG="$FAKE_GIT_LOG" \
+      FAKE_GIT_BRANCH="main" \
+      "$GIT_WRAPPER" merge --abort
+)"
+assert_exit 0 "$status" "git wrapper allows merge --abort on main"
 
 git_push_main_out="$TMP_DIR/git_push_main.out"
 status="$(
@@ -151,7 +206,7 @@ assert_not_contains "blocked: pushing to 'main'" "$git_push_feature_out" "featur
 assert_contains "push origin HEAD:refs/heads/feature/hug-11" "$FAKE_GIT_LOG" "git wrapper forwards allowed push to real git"
 
 gh_missing_out="$TMP_DIR/gh_missing.out"
-status="$(run_and_capture "$gh_missing_out" "$GH_WRAPPER" pr view 1)"
+status="$(run_and_capture "$gh_missing_out" env -u SYMPHONY_REAL_GH "$GH_WRAPPER" pr view 1)"
 assert_exit 127 "$status" "gh wrapper requires SYMPHONY_REAL_GH"
 assert_contains "missing real gh binary" "$gh_missing_out" "gh wrapper missing-binary error is actionable"
 
