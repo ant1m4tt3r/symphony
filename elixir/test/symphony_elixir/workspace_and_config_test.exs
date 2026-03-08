@@ -693,6 +693,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       workspace_root: nil,
       max_concurrent_agents: nil,
+      agent_runtime: nil,
       codex_approval_policy: nil,
       codex_thread_sandbox: nil,
       codex_turn_sandbox_policy: nil,
@@ -708,7 +709,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.linear_project_slug() == nil
     assert Config.workspace_root() == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert Config.max_concurrent_agents() == 10
+    assert Config.agent_runtime_override() == nil
+    assert Config.agent_runtime() == "claude"
     assert Config.codex_command() == "codex app-server"
+    assert Config.claude_command() == "claude app-server"
+    assert Config.command_for_runtime("claude") == "claude app-server"
+    assert Config.command_for_runtime("codex") == "codex app-server"
 
     assert Config.codex_approval_policy() == %{
              "reject" => %{
@@ -753,6 +759,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
            }
 
     assert Config.codex_allow_unsafe_merge_push?()
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_runtime: "codex", claude_command: "/bin/sh app-server")
+    assert Config.agent_runtime_override() == "codex"
+    assert Config.agent_runtime() == "codex"
+    assert Config.claude_command() == "/bin/sh app-server"
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ",")
     assert Config.linear_active_states() == ["Todo", "In Progress"]

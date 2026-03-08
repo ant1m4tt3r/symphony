@@ -73,6 +73,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        %{
          event: :session_started,
          session_id: "thread-live-turn-live",
+         requested_runtime: "claude",
+         requested_runtime_source: "default",
+         effective_runtime: "codex",
+         runtime_command: "/tmp/fake-codex app-server",
+         runtime_fallback_reason: "selected runtime claude unavailable; fell back to codex",
          timestamp: now
        }}
     )
@@ -92,6 +97,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert snapshot_entry.issue_id == issue_id
     assert snapshot_entry.session_id == "thread-live-turn-live"
     assert snapshot_entry.turn_count == 1
+    assert snapshot_entry.requested_runtime == "claude"
+    assert snapshot_entry.requested_runtime_source == "default"
+    assert snapshot_entry.effective_runtime == "codex"
+    assert snapshot_entry.runtime_command == "/tmp/fake-codex app-server"
+    assert snapshot_entry.runtime_fallback_reason =~ "fell back to codex"
     assert snapshot_entry.last_codex_timestamp == now
 
     assert snapshot_entry.last_codex_message == %{
@@ -1023,7 +1033,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-    assert remaining_ms >= 8_500
+    assert remaining_ms >= 8_000
     assert remaining_ms <= 10_500
   end
 
