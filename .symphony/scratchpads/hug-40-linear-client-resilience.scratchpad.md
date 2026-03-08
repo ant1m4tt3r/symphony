@@ -36,6 +36,7 @@
 - [x] Pushed branch and opened PR `#22`:
   - `https://github.com/ant1m4tt3r/symphony/pull/22`
 - [x] Moved Linear issue `HUG-40` to `In Review` (working PR exists and is attached in Linear issue attachments).
+- [x] Synced branch with latest `origin/main` during `In Review` pass (`d2c3aad`) and re-verified tests.
 
 ### Validation Evidence
 
@@ -44,6 +45,7 @@
 - `cd elixir && mix test test/symphony_elixir/linear_client_resilience_test.exs test/symphony_elixir/workspace_and_config_test.exs test/symphony_elixir/dynamic_tool_test.exs test/symphony_elixir/orchestrator_status_test.exs`
 - `cd elixir && mix test`
 - `cd elixir && mix specs.check`
+- `cd elixir && mix test` (post-merge verification after `origin/main` sync)
 - `./scripts/symphony/test-guards.sh`
 - `tmp_env="$(mktemp)" && cp .env.symphony.local.example "$tmp_env" && SYMPHONY_ENV_FILE="$tmp_env" SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh`
 
