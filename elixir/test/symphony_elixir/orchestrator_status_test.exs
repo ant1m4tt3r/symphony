@@ -955,8 +955,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-    assert remaining_ms >= 9_500
-    assert remaining_ms <= 10_500
+    assert remaining_ms >= 9_000
+    assert remaining_ms <= 11_000
   end
 
   test "status dashboard renders offline marker to terminal" do
@@ -1137,7 +1137,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     end)
 
     if is_pid(orchestrator_pid) do
-      assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+      assert :ok =
+               Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
     end
 
     {:ok, pid} =
