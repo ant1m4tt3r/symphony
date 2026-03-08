@@ -3,7 +3,7 @@
 - Branch: `hug-40-linear-client-resilience`
 - Issue: `HUG-40`
 - Linear workpad comment id: `c68b28a1-d9c0-4d35-855b-2af87eb4eab7`
-- Status: `In Progress`
+- Status: `In Review`
 
 ### Objective
 
@@ -30,6 +30,12 @@
 - [x] Added dedicated resilience tests in `linear_client_resilience_test.exs`.
 - [x] Stabilized test environment isolation by clearing/restoring `LINEAR_API_KEY` in test setup.
 - [x] Ran relevant tests/checks and recorded evidence.
+- [x] Committed changes:
+  - `238b163` `feat(linear): add resilient retries to GraphQL client`
+  - `444beb4` `fix(linear): resolve lint and dialyzer in resilience client`
+- [x] Pushed branch and opened PR `#22`:
+  - `https://github.com/ant1m4tt3r/symphony/pull/22`
+- [x] Moved Linear issue `HUG-40` to `In Review` (working PR exists and is attached in Linear issue attachments).
 
 ### Validation Evidence
 
@@ -50,6 +56,4 @@
 
 ### Pending
 
-- [ ] Commit
-- [ ] Push + PR
-- [ ] Move issue to `In Review` once working PR exists
+- [ ] Monitor PR checks and review feedback while issue is in `In Review`
