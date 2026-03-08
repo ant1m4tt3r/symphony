@@ -527,8 +527,6 @@ defmodule SymphonyElixir.Orchestrator do
     String.starts_with?(normalized_title, "[ongoing]")
   end
 
-  defp ongoing_issue?(_normalized_title), do: false
-
   defp issue_created_at_sort_key(%Issue{created_at: %DateTime{} = created_at}) do
     DateTime.to_unix(created_at, :microsecond)
   end
@@ -692,6 +690,11 @@ defmodule SymphonyElixir.Orchestrator do
             identifier: issue.identifier,
             issue: issue,
             session_id: nil,
+            requested_runtime: nil,
+            requested_runtime_source: nil,
+            effective_runtime: nil,
+            runtime_command: nil,
+            runtime_fallback_reason: nil,
             last_codex_message: nil,
             last_codex_timestamp: nil,
             last_codex_event: nil,
@@ -1112,6 +1115,11 @@ defmodule SymphonyElixir.Orchestrator do
           agent_override: agent_override,
           effective_agent: effective_agent,
           session_id: metadata.session_id,
+          requested_runtime: Map.get(metadata, :requested_runtime),
+          requested_runtime_source: Map.get(metadata, :requested_runtime_source),
+          effective_runtime: Map.get(metadata, :effective_runtime),
+          runtime_command: Map.get(metadata, :runtime_command),
+          runtime_fallback_reason: Map.get(metadata, :runtime_fallback_reason),
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
           codex_output_tokens: metadata.codex_output_tokens,
@@ -1191,6 +1199,11 @@ defmodule SymphonyElixir.Orchestrator do
         last_codex_message: summarize_codex_update(update),
         session_id: session_id_for_update(running_entry.session_id, update),
         last_codex_event: event,
+        requested_runtime: runtime_field_for_update(running_entry, update, :requested_runtime),
+        requested_runtime_source: runtime_field_for_update(running_entry, update, :requested_runtime_source),
+        effective_runtime: runtime_field_for_update(running_entry, update, :effective_runtime),
+        runtime_command: runtime_field_for_update(running_entry, update, :runtime_command),
+        runtime_fallback_reason: runtime_field_for_update(running_entry, update, :runtime_fallback_reason),
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
@@ -1225,6 +1238,24 @@ defmodule SymphonyElixir.Orchestrator do
     do: session_id
 
   defp session_id_for_update(existing, _update), do: existing
+
+  defp runtime_field_for_update(running_entry, update, key) when is_map(running_entry) and is_map(update) do
+    existing = Map.get(running_entry, key)
+
+    cond do
+      Map.has_key?(update, key) ->
+        Map.get(update, key)
+
+      Map.has_key?(update, Atom.to_string(key)) ->
+        Map.get(update, Atom.to_string(key))
+
+      true ->
+        existing
+    end
+  end
+
+  defp runtime_field_for_update(running_entry, _update, key) when is_map(running_entry),
+    do: Map.get(running_entry, key)
 
   defp turn_count_for_update(existing_count, existing_session_id, %{
          event: :session_started,
@@ -1549,8 +1580,6 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp runtime_metadata_for_update(_update), do: %{}
-
   defp runtime_metadata_from_command(command) when is_binary(command) do
     trimmed = String.trim(command)
     model = extract_model_from_command(trimmed)
@@ -1681,37 +1710,33 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp extract_model_from_command(_command), do: nil
-
   defp engine_from_command(command, model) when is_binary(command) do
     normalized = String.downcase(command)
+    detect_engine(normalized) || if(is_binary(model), do: "custom")
+  end
 
+  defp detect_engine(normalized) do
     cond do
-      String.contains?(normalized, "opencode_app_server.py") or
-          String.contains?(normalized, "opencode run") ->
-        "opencode"
-
-      String.contains?(normalized, "claude_app_server.py") or String.contains?(normalized, "claude ") ->
-        "claude"
-
-      String.contains?(normalized, "agent_router.sh") ->
-        "mixed"
-
-      String.contains?(normalized, " codex ") or
-        String.starts_with?(normalized, "codex ") or
-          String.contains?(normalized, "/codex") ->
-        "codex"
-
-      is_binary(model) ->
-        "custom"
-
-      true ->
-        nil
+      opencode_command?(normalized) -> "opencode"
+      claude_command?(normalized) -> "claude"
+      String.contains?(normalized, "agent_router.sh") -> "mixed"
+      codex_command?(normalized) -> "codex"
+      true -> nil
     end
   end
 
-  defp engine_from_command(_command, model) when is_binary(model), do: "custom"
-  defp engine_from_command(_command, _model), do: nil
+  defp opencode_command?(cmd) do
+    String.contains?(cmd, "opencode_app_server.py") or String.contains?(cmd, "opencode run")
+  end
+
+  defp claude_command?(cmd) do
+    String.contains?(cmd, "claude_app_server.py") or String.contains?(cmd, "claude ")
+  end
+
+  defp codex_command?(cmd) do
+    String.contains?(cmd, " codex ") or String.starts_with?(cmd, "codex ") or
+      String.contains?(cmd, "/codex")
+  end
 
   defp normalize_engine_value(value) when is_binary(value) do
     value

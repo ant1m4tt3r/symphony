@@ -3,6 +3,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
+  import Plug.Conn, only: [get_resp_header: 2]
 
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
@@ -355,21 +356,27 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "assignee_id" => nil,
                  "updated_at" => nil,
                  "branch_name" => nil,
-                 "agent_engine" => nil,
+                 "agent_engine" => "opencode",
                  "agent_override" => nil,
                  "effective_agent" => "claude",
-                 "agent" => %{
-                   "command" => nil,
-                   "engine" => nil,
-                   "provider" => nil,
-                   "model" => nil
-                 },
                  "session_id" => "thread-http",
+                 "runtime" => %{
+                   "requested" => nil,
+                   "effective" => nil,
+                   "source" => nil,
+                   "fallback_reason" => nil
+                 },
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
+                 "agent" => %{
+                   "command" => "python3 scripts/symphony/bin/opencode_app_server.py",
+                   "engine" => "opencode",
+                   "provider" => "openai",
+                   "model" => "openai/gpt-5"
+                 },
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
                }
              ],
@@ -402,6 +409,12 @@ defmodule SymphonyElixir.ExtensionsTest do
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
                "session_id" => "thread-http",
+               "runtime" => %{
+                 "requested" => nil,
+                 "effective" => nil,
+                 "source" => nil,
+                 "fallback_reason" => nil
+               },
                "turn_count" => 7,
                "state" => "In Progress",
                "started_at" => issue_payload["running"]["started_at"],
@@ -409,10 +422,10 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_message" => "rendered",
                "last_event_at" => nil,
                "agent" => %{
-                 "command" => nil,
-                 "engine" => nil,
-                 "provider" => nil,
-                 "model" => nil
+                 "command" => "python3 scripts/symphony/bin/opencode_app_server.py",
+                 "engine" => "opencode",
+                 "provider" => "openai",
+                 "model" => "openai/gpt-5"
                },
                "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
              },
@@ -515,7 +528,11 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "/assets/app.js"
     refute html =~ "<style>"
 
-    dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
+    dashboard_css_conn = get(build_conn(), "/dashboard.css")
+    assert get_resp_header(dashboard_css_conn, "cache-control") == ["no-store, max-age=0, must-revalidate"]
+    assert get_resp_header(dashboard_css_conn, "pragma") == ["no-cache"]
+    assert get_resp_header(dashboard_css_conn, "expires") == ["0"]
+    dashboard_css = response(dashboard_css_conn, 200)
     assert dashboard_css =~ ":root {"
     assert dashboard_css =~ ".status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
@@ -732,6 +749,10 @@ defmodule SymphonyElixir.ExtensionsTest do
           last_codex_message: "rendered",
           last_codex_timestamp: nil,
           last_codex_event: :notification,
+          agent_command: "python3 scripts/symphony/bin/opencode_app_server.py",
+          agent_engine: "opencode",
+          agent_provider: "openai",
+          agent_model: "openai/gpt-5",
           codex_input_tokens: 4,
           codex_output_tokens: 8,
           codex_total_tokens: 12,

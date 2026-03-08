@@ -237,6 +237,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   <col style="width: 12rem;" />
                   <col style="width: 8rem;" />
                   <col style="width: 7.5rem;" />
+                  <col style="width: 7.5rem;" />
                   <col style="width: 8.5rem;" />
                   <col style="width: 12rem;" />
                   <col />
@@ -247,6 +248,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <th>Issue</th>
                     <th>State</th>
                     <th>Session</th>
+                    <th>Runtime</th>
                     <th>Runtime / turns</th>
                     <th>Agent runtime</th>
                     <th>Codex update</th>
@@ -282,6 +284,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
                           <span class="muted">n/a</span>
                         <% end %>
                       </div>
+                    </td>
+                    <td>
+                      <span class="state-badge">
+                        <%= runtime_label(entry.runtime) %>
+                      </span>
                     </td>
                     <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
                     <td>
@@ -426,6 +433,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp format_int(_value), do: "n/a"
+
+  defp runtime_label(%{effective: effective}) when is_binary(effective) and effective != "", do: effective
+  defp runtime_label(%{requested: requested}) when is_binary(requested) and requested != "", do: requested
+  defp runtime_label(_runtime), do: "n/a"
 
   defp priority_label(nil), do: "No priority"
   defp priority_label(0), do: "No priority"

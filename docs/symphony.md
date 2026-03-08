@@ -1,11 +1,13 @@
 # Symphony Fork Harness
 
-This fork includes a local harness to run Symphony from this repository (`/Users/antimatter/Dev/repos/symphony`) with dashboard + Linear tracker.
+This fork includes a local harness to run Symphony from this repository with
+dashboard + Linear tracker.
 
 ## Files
 
 - `scripts/symphony/install.sh`: build Symphony runtime from this fork.
 - `scripts/symphony/start.sh`: render workflow + start Symphony + dashboard.
+- `scripts/symphony/preflight.sh`: one-command readiness check for env/project/workflow.
 - `scripts/symphony/list-projects.sh`: list available Linear project slugs.
 - `scripts/symphony/bin/claude_app_server.py`: Claude Code CLI shim that speaks Symphony's expected app-server protocol.
 - `.symphony/WORKFLOW.template.md`: template used to render the runtime workflow.
@@ -13,18 +15,51 @@ This fork includes a local harness to run Symphony from this repository (`/Users
 
 ## First-time setup
 
-1. Fill `LINEAR_PROJECT_SLUG` in `.env.symphony.local` with the Linear `slugId` value.
-2. Set `SYMPHONY_MAX_CONCURRENT_AGENTS=1` for single-task processing (already defaulted in this repo).
-3. Verify statuses exist in your Linear team workflow:
+1. Bootstrap local env:
+
+```bash
+cp .env.symphony.local.example .env.symphony.local
+```
+
+2. Fill required values in `.env.symphony.local`:
+   - `LINEAR_API_KEY`
+   - `LINEAR_PROJECT_SLUG` (Linear `slugId`)
+3. Set `SYMPHONY_MAX_CONCURRENT_AGENTS=1` for single-task processing (already defaulted in this repo).
+4. Verify statuses exist in your Linear team workflow:
    - Active for Symphony polling: `Backlog`, `Todo`, `Ready for Dev`, `In Progress`, `In Review`
    - Terminal: `Done`, `Canceled`, `Duplicate`
-4. Install Symphony:
+5. Install Symphony:
 
 ```bash
 ./scripts/symphony/install.sh
 ```
 
 ## Run
+
+Before starting Symphony, run the readiness preflight:
+
+```bash
+./scripts/symphony/preflight.sh
+```
+
+Expected successful output:
+
+```text
+[preflight] Symphony harness readiness check
+[preflight] env_file=/path/to/repo/.env.symphony.local
+[check] Required environment keys
+  [ok] LINEAR_API_KEY is set
+  [ok] LINEAR_PROJECT_SLUG is set
+[check] Linear project reachability
+  [ok] project reachable: <project-name> (<project-slug>, state=<state>)
+[check] Workflow validation
+  [ok] Workflow config valid
+[ready] Symphony harness preflight passed
+```
+
+Any failed check exits non-zero and prints a `[fail] ...` line with the reason.
+
+Then start Symphony:
 
 ```bash
 ./scripts/symphony/start.sh
@@ -38,6 +73,27 @@ To validate config without starting the daemon:
 
 ```bash
 SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh
+```
+
+## Reproducibility smoke checks
+
+Run guard regression tests:
+
+```bash
+./scripts/symphony/test-guards.sh
+```
+
+Run workflow/config validation with an isolated temp env file:
+
+```bash
+tmp_env="$(mktemp)"
+cat > "$tmp_env" <<'EOF'
+LINEAR_API_KEY=lin_api_smoke_test
+LINEAR_PROJECT_SLUG=smoke-test-project
+SYMPHONY_AI_ENGINE=codex
+EOF
+SYMPHONY_ENV_FILE="$tmp_env" SYMPHONY_VALIDATE_ONLY=1 ./scripts/symphony/start.sh
+rm -f "$tmp_env"
 ```
 
 ## AI engine selection
@@ -70,7 +126,7 @@ Distribute agents across Codex and OpenCode:
 
 ```bash
 SYMPHONY_AI_ENGINE=mixed \
-SYMPHONY_AGENT_ROUTER_MAP=codex:3,opencode:2 \
+SYMPHONY_AGENT_ROUTER_MAP=claude:6,codex:1,opencode:1 \
 ./scripts/symphony/start.sh
 ```
 
@@ -80,11 +136,12 @@ Engine env vars:
 - `SYMPHONY_AGENT_COMMAND`: full command override for the agent runtime.
 - `CODEX_COMMAND`: legacy alias still supported for backward compatibility.
 - `SYMPHONY_POLL_INTERVAL_MS`: tracker polling interval in milliseconds (default `2000`).
+- `SYMPHONY_HOOK_TIMEOUT_MS`: workspace hook timeout in milliseconds (default `180000`). Increase when `after_create` bootstrap needs longer than 60s.
 - `SYMPHONY_MAX_TURNS`: max continuation turns per agent run (default `8`; lower means faster reaction to new comments/state updates).
-- `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls; default is blocked.
+- `SYMPHONY_ALLOW_AUTO_MERGE`: set to `1` to allow Symphony to run `gh pr merge` / merge API calls and to opt out of the local `git merge`-to-`main` guard when explicitly needed; default is blocked.
   - This also enables `codex.allow_unsafe_merge_push: true` in generated workflow so app-server approval guardrails do not block merge commands.
 - Mixed routing options:
-  - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (example `codex:3,opencode:2`).
+  - `SYMPHONY_AGENT_ROUTER_MAP`: weighted list (default `claude:6,codex:1,opencode:1`; example `claude:6,codex:1,opencode:1`).
   - `SYMPHONY_AGENT_ROUTER_FALLBACK`: fallback engine when selected engine is unavailable (default `codex`).
   - `SYMPHONY_ROUTER_CODEX_COMMAND`: optional Codex command override for router mode.
   - `SYMPHONY_ROUTER_OPENCODE_COMMAND`: optional OpenCode command override for router mode.
@@ -113,6 +170,7 @@ Claude mode note:
 - Before each agent run, `scripts/symphony/bin/sync_feedback.sh` updates feedback snapshots:
   - `.symphony/pr-feedback.md` for GitHub PR metadata, comments/reviews, and checks.
   - `.symphony/linear-feedback.md` for Linear issue snapshot and latest comments.
+- PR feedback now includes an explicit mergeability snapshot (`mergeStateStatus`, review decision, head/base refs, `requires_update_branch`) so agents can detect conflicts and run update-branch flow quickly.
 - Sync is incremental and cached via:
   - `.symphony/pr-feedback.state`
   - `.symphony/linear-feedback.state`
@@ -121,6 +179,12 @@ Claude mode note:
   - `SYMPHONY_PR_COMMENT_LIMIT` (default `20`)
   - `SYMPHONY_LINEAR_COMMENT_LIMIT` (default `20`)
 - Agents must treat both feedback files as mandatory review input when present.
+
+## Conflict handling
+
+- Workspace setup enables Git `rerere` (`rerere.enabled=true`, `rerere.autoupdate=true`) to reduce repeat conflict effort.
+- Agents are expected to keep branches mergeable by running the `.codex/skills/pull` merge-based update flow with `origin/main` whenever PR mergeability is dirty/conflicted.
+- Treat GitHub `mergeStateStatus` values `DIRTY`, `BEHIND`, `BLOCKED`, and `UNSTABLE` as immediate update-branch signals.
 
 ## Helper
 
@@ -132,6 +196,10 @@ To list project slugs from your Linear workspace:
 
 ## Status policy
 
+- PR-only flow: all changes must go through pull requests targeting `main`.
+  Direct pushes to `main` are not allowed.
+- Manual-only merge by default: unless `SYMPHONY_ALLOW_AUTO_MERGE=1`, PRs stay
+  human-merged only.
 - Move to `In Review` only after a working PR exists (open, non-draft, target `main`, linked to the issue, with commits).
 - If an issue begins in `Backlog`, `Todo`, or `Ready for Dev`, Symphony may move it to `In Progress` before implementation.
 - Dispatch prioritization favors active delivery:
@@ -171,4 +239,5 @@ To list project slugs from your Linear workspace:
 - By default, the `gh` wrapper blocks `gh pr merge` and GitHub API merge endpoints (`/pulls/<n>/merge`) and returns a hard error.
 - Set `SYMPHONY_ALLOW_AUTO_MERGE=1` to allow merge commands for this repository harness.
 - The `git` guard blocks direct pushes to `main` (including `HEAD:main` style refspecs), even if hooks are bypassed.
+- The `git` guard also blocks `git merge` while checked out on `main` by default and prints PR-flow remediation. Set `SYMPHONY_ALLOW_AUTO_MERGE=1` only when intentionally opting out locally.
 - Each Symphony workspace clone also installs a `pre-push` hook that blocks pushes to `refs/heads/main`.

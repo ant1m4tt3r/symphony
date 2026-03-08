@@ -1,0 +1,2 @@
+command: claude --print --verbose --output-format stream-json --include-partial-messages --permission-mode bypassPermissions --model claude-opus-4-6 --settings '{"hooks":{"Notification":[],"Stop":[]}}' --mcp-config /Users/antimatter/Dev/repos/symphony/.symphony/workspaces/HUG-25/.mcp.json --strict-mcp-config -- <PROMPT>
+

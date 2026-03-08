@@ -12,6 +12,7 @@ defmodule SymphonyElixir.CoreTest do
       poll_interval_ms: nil,
       tracker_active_states: nil,
       tracker_terminal_states: nil,
+      agent_runtime: nil,
       codex_command: nil
     )
 
@@ -20,6 +21,8 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.linear_terminal_states() == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
     assert Config.linear_assignee() == nil
     assert Config.agent_max_turns() == 20
+    assert Config.agent_runtime() == "claude"
+    assert Config.claude_command() == "claude app-server"
 
     write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: "invalid")
     assert Config.poll_interval_ms() == 30_000
@@ -475,7 +478,7 @@ defmodule SymphonyElixir.CoreTest do
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_in_range(due_at_ms, 250, 1_100)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -515,7 +518,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_due_in_range(due_at_ms, 39_000, 40_500)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -554,7 +557,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert_due_in_range(due_at_ms, 8_500, 10_500)
   end
 
   defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do

@@ -1,0 +1,2 @@
+command: opencode run --format json -- <PROMPT>
+

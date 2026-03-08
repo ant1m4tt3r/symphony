@@ -6,10 +6,45 @@ deny_push_main() {
   exit 43
 }
 
+deny_merge_main() {
+  echo "[symphony-guard] blocked: merging into 'main' is disabled by default. Use the PR flow instead; set SYMPHONY_ALLOW_AUTO_MERGE=1 only for an intentional local opt-out." >&2
+  exit 44
+}
+
+auto_merge_enabled() {
+  case "${SYMPHONY_ALLOW_AUTO_MERGE:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 real_git="${SYMPHONY_REAL_GIT:-}"
 if [[ -z "$real_git" || ! -x "$real_git" ]]; then
   echo "[symphony-guard] missing real git binary via SYMPHONY_REAL_GIT; refusing to continue." >&2
   exit 127
+fi
+
+if [[ "${1:-}" == "merge" ]]; then
+  shift
+
+  for arg in "$@"; do
+    case "$arg" in
+      --help|-h|--abort|--continue|--quit)
+        exec "$real_git" merge "$@"
+        ;;
+    esac
+  done
+
+  branch="$("$real_git" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$branch" == "main" ]] && ! auto_merge_enabled; then
+    deny_merge_main
+  fi
+
+  exec "$real_git" merge "$@"
 fi
 
 if [[ "${1:-}" == "push" ]]; then

@@ -21,6 +21,7 @@ SYMPHONY_HOME="${SYMPHONY_HOME:-$REPO_ROOT}"
 SYMPHONY_DASHBOARD_PORT="${SYMPHONY_DASHBOARD_PORT:-4040}"
 SYMPHONY_WORKSPACE_ROOT="${SYMPHONY_WORKSPACE_ROOT:-$REPO_ROOT/.symphony/workspaces}"
 SYMPHONY_POLL_INTERVAL_MS="${SYMPHONY_POLL_INTERVAL_MS:-2000}"
+SYMPHONY_HOOK_TIMEOUT_MS="${SYMPHONY_HOOK_TIMEOUT_MS:-180000}"
 SYMPHONY_MAX_CONCURRENT_AGENTS="${SYMPHONY_MAX_CONCURRENT_AGENTS:-1}"
 SYMPHONY_MAX_TURNS="${SYMPHONY_MAX_TURNS:-8}"
 SYMPHONY_ALLOW_AUTO_MERGE="${SYMPHONY_ALLOW_AUTO_MERGE:-0}"
@@ -236,6 +237,7 @@ source_repo_escaped="$(escape_for_sed "$SOURCE_REPO_URL")"
 agent_command_escaped="$(escape_for_sed "$AGENT_COMMAND")"
 max_agents_escaped="$(escape_for_sed "$SYMPHONY_MAX_CONCURRENT_AGENTS")"
 poll_interval_escaped="$(escape_for_sed "$SYMPHONY_POLL_INTERVAL_MS")"
+hook_timeout_escaped="$(escape_for_sed "$SYMPHONY_HOOK_TIMEOUT_MS")"
 max_turns_escaped="$(escape_for_sed "$SYMPHONY_MAX_TURNS")"
 sync_feedback_script_escaped="$(escape_for_sed "$SYMPHONY_SYNC_FEEDBACK_SCRIPT")"
 allow_unsafe_merge_push_escaped="$(escape_for_sed "$allow_unsafe_merge_push")"
@@ -244,6 +246,7 @@ sed \
   -e "s|__LINEAR_PROJECT_SLUG__|$slug_escaped|g" \
   -e "s|__SYMPHONY_WORKSPACE_ROOT__|$workspace_escaped|g" \
   -e "s|__POLL_INTERVAL_MS__|$poll_interval_escaped|g" \
+  -e "s|__HOOK_TIMEOUT_MS__|$hook_timeout_escaped|g" \
   -e "s|__SOURCE_REPO_URL__|$source_repo_escaped|g" \
   -e "s|__SYNC_FEEDBACK_SCRIPT__|$sync_feedback_script_escaped|g" \
   -e "s|__AGENT_COMMAND__|$agent_command_escaped|g" \

@@ -31,8 +31,18 @@ Check out [elixir/README.md](elixir/README.md) for instructions on how to set up
 and run the Elixir-based Symphony implementation. You can also ask your favorite coding agent to
 help with the setup:
 
+The Elixir reference workflow supports a global `agent.engine` selector with `claude` as the
+default and `codex` as an explicit override, and shows the effective engine in dashboard and log
+output.
+
 > Set up Symphony for my repository based on
 > https://github.com/openai/symphony/blob/main/elixir/README.md
+
+### Fork harness runbook
+
+For this fork's production harness setup (install/start scripts, workflow
+template, tracker state policy, and guardrails), see
+[docs/symphony.md](docs/symphony.md).
 
 ---
 
