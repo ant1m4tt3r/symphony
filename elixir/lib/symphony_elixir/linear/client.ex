@@ -8,6 +8,42 @@ defmodule SymphonyElixir.Linear.Client do
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
+  @default_retry_attempts 3
+  @default_retry_base_delay_ms 250
+  @default_retry_max_delay_ms 5_000
+  @default_circuit_failure_threshold 5
+  @default_circuit_cooldown_ms 30_000
+  @default_rate_limit_low_remaining 5
+  @default_rate_limit_backoff_ms 1_000
+  @default_rate_limit_backoff_cap_ms 30_000
+  @circuit_table :symphony_linear_client_circuit_breaker
+  @http_retry_after_regex ~r/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/
+  @http_retry_after_months %{
+    "Jan" => 1,
+    "Feb" => 2,
+    "Mar" => 3,
+    "Apr" => 4,
+    "May" => 5,
+    "Jun" => 6,
+    "Jul" => 7,
+    "Aug" => 8,
+    "Sep" => 9,
+    "Oct" => 10,
+    "Nov" => 11,
+    "Dec" => 12
+  }
+  @transient_request_reasons MapSet.new([
+                               :timeout,
+                               :connect_timeout,
+                               :closed,
+                               :econnrefused,
+                               :econnreset,
+                               :enetdown,
+                               :enetunreach,
+                               :ehostdown,
+                               :ehostunreach,
+                               :nxdomain
+                             ])
 
   @query """
   query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
@@ -163,22 +199,40 @@ defmodule SymphonyElixir.Linear.Client do
       when is_binary(query) and is_map(variables) and is_list(opts) do
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
     request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/2)
+    resilience = resilience_options(opts)
 
-    with {:ok, headers} <- graphql_headers(),
-         {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
-      {:ok, body}
-    else
-      {:ok, response} ->
-        Logger.error(
-          "Linear GraphQL request failed status=#{response.status}" <>
-            linear_error_context(payload, response)
-        )
+    case graphql_headers() do
+      {:ok, headers} ->
+        with :ok <- ensure_circuit_ready(resilience),
+             {:ok, response, _retry_metadata} <-
+               perform_graphql_with_retries(payload, headers, request_fun, resilience),
+             :ok <- maybe_apply_proactive_rate_limit_backoff(response, resilience),
+             :ok <- clear_circuit_failures(resilience) do
+          {:ok, Map.get(response, :body)}
+        else
+          {:error, {:linear_api_status, status, metadata}} ->
+            log_status_failure(payload, status, metadata)
+            {:error, {:linear_api_status, status, metadata}}
 
-        {:error, {:linear_api_status, response.status}}
+          {:error, {:linear_api_status_response, status, response}} ->
+            Logger.error(
+              "Linear GraphQL request failed status=#{status}" <>
+                linear_error_context(payload, response)
+            )
+
+            {:error, {:linear_api_status, status}}
+
+          {:error, {:linear_api_request, reason, metadata}} = error ->
+            log_request_failure(reason, metadata)
+            error
+
+          {:error, {:linear_api_request, reason}} = error ->
+            Logger.error("Linear GraphQL request failed: #{inspect(reason)}" <> resilience_log_context(%{}))
+            error
+        end
 
       {:error, reason} ->
-        Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
-        {:error, {:linear_api_request, reason}}
+        {:error, reason}
     end
   end
 
@@ -216,6 +270,14 @@ defmodule SymphonyElixir.Linear.Client do
     issue_pages
     |> Enum.reduce([], &prepend_page_issues/2)
     |> finalize_paginated_issues()
+  end
+
+  @doc false
+  @spec reset_resilience_state_for_test(term()) :: :ok
+  def reset_resilience_state_for_test(circuit_key \\ :default) do
+    ensure_circuit_table()
+    :ets.delete(@circuit_table, circuit_key)
+    :ok
   end
 
   defp do_fetch_by_states(project_slug, state_names, assignee_filter) do
@@ -344,6 +406,594 @@ defmodule SymphonyElixir.Linear.Client do
       json: payload,
       connect_options: [timeout: 30_000]
     )
+  end
+
+  defp resilience_options(opts) do
+    %{
+      circuit_key: Keyword.get(opts, :circuit_key, :default),
+      retry_attempts: non_negative_integer_option(opts, :retry_attempts, @default_retry_attempts),
+      retry_base_delay_ms: positive_integer_option(opts, :retry_base_delay_ms, @default_retry_base_delay_ms),
+      retry_max_delay_ms: positive_integer_option(opts, :retry_max_delay_ms, @default_retry_max_delay_ms),
+      circuit_failure_threshold:
+        positive_integer_option(
+          opts,
+          :circuit_failure_threshold,
+          @default_circuit_failure_threshold
+        ),
+      circuit_cooldown_ms:
+        positive_integer_option(
+          opts,
+          :circuit_cooldown_ms,
+          @default_circuit_cooldown_ms
+        ),
+      rate_limit_low_remaining:
+        positive_integer_option(
+          opts,
+          :rate_limit_low_remaining,
+          @default_rate_limit_low_remaining
+        ),
+      rate_limit_backoff_ms:
+        positive_integer_option(
+          opts,
+          :rate_limit_backoff_ms,
+          @default_rate_limit_backoff_ms
+        ),
+      rate_limit_backoff_cap_ms:
+        positive_integer_option(
+          opts,
+          :rate_limit_backoff_cap_ms,
+          @default_rate_limit_backoff_cap_ms
+        ),
+      sleep_fun: Keyword.get(opts, :sleep_fun, &Process.sleep/1),
+      monotonic_time_fun: Keyword.get(opts, :monotonic_time_fun, fn -> System.monotonic_time(:millisecond) end),
+      wall_clock_fun: Keyword.get(opts, :wall_clock_fun, &DateTime.utc_now/0)
+    }
+  end
+
+  defp positive_integer_option(opts, key, default) do
+    case Keyword.get(opts, key, default) do
+      value when is_integer(value) and value > 0 -> value
+      _ -> default
+    end
+  end
+
+  defp non_negative_integer_option(opts, key, default) do
+    case Keyword.get(opts, key, default) do
+      value when is_integer(value) and value >= 0 -> value
+      _ -> default
+    end
+  end
+
+  defp ensure_circuit_ready(resilience) when is_map(resilience) do
+    state = read_circuit_state(resilience)
+    now_ms = resilience.monotonic_time_fun.()
+    open_until_ms = Map.get(state, :open_until_ms)
+
+    cond do
+      is_integer(open_until_ms) and open_until_ms > now_ms ->
+        circuit_metadata =
+          circuit_metadata(
+            state,
+            resilience,
+            now_ms,
+            if(open_until_ms > now_ms, do: :open, else: :closed)
+          )
+
+        metadata = %{
+          retry: %{attempt: 0, max_attempts: resilience.retry_attempts + 1, retries: 0, exhausted: false},
+          circuit: circuit_metadata
+        }
+
+        Logger.warning("Linear GraphQL circuit breaker open; skipping request" <> resilience_log_context(metadata))
+
+        {:error, {:linear_api_request, {:circuit_open, circuit_metadata}, metadata}}
+
+      is_integer(open_until_ms) and open_until_ms <= now_ms ->
+        write_circuit_state(resilience, default_circuit_state())
+        :ok
+
+      true ->
+        :ok
+    end
+  end
+
+  defp perform_graphql_with_retries(payload, headers, request_fun, resilience) do
+    max_attempts = resilience.retry_attempts + 1
+    do_perform_graphql_with_retries(payload, headers, request_fun, resilience, 1, max_attempts, nil)
+  end
+
+  defp do_perform_graphql_with_retries(
+         payload,
+         headers,
+         request_fun,
+         resilience,
+         attempt,
+         max_attempts,
+         last_delay_ms
+       ) do
+    case request_fun.(payload, headers) do
+      {:ok, raw_response} ->
+        response = normalize_response(raw_response)
+        status = Map.get(response, :status)
+        retry_after_ms = extract_retry_after_ms(response, resilience)
+
+        response_context = %{
+          payload: payload,
+          headers: headers,
+          request_fun: request_fun,
+          resilience: resilience,
+          attempt: attempt,
+          max_attempts: max_attempts,
+          last_delay_ms: last_delay_ms,
+          retry_after_ms: retry_after_ms
+        }
+
+        handle_graphql_response(status, response, response_context)
+
+      {:error, reason} ->
+        handle_graphql_request_error(
+          reason,
+          payload,
+          headers,
+          request_fun,
+          resilience,
+          attempt,
+          max_attempts,
+          last_delay_ms
+        )
+    end
+  end
+
+  defp handle_graphql_response(200, response, context) do
+    attempt = context.attempt
+    max_attempts = context.max_attempts
+    last_delay_ms = context.last_delay_ms
+    retry_after_ms = context.retry_after_ms
+
+    {:ok, response, retry_metadata(attempt, max_attempts, last_delay_ms, retry_after_ms, false)}
+  end
+
+  defp handle_graphql_response(status, response, context) when is_integer(status) do
+    resilience = context.resilience
+    attempt = context.attempt
+    max_attempts = context.max_attempts
+    retry_after_ms = context.retry_after_ms
+
+    cond do
+      transient_status?(status) and attempt < max_attempts ->
+        delay_ms = retry_delay_ms(attempt, retry_after_ms, resilience)
+        log_transient_status_retry(status, attempt, max_attempts, delay_ms, retry_after_ms)
+        resilience.sleep_fun.(delay_ms)
+        retry_graphql_request(context, delay_ms)
+
+      transient_status?(status) ->
+        circuit = record_circuit_failure(resilience)
+
+        metadata = %{
+          retry:
+            retry_metadata(
+              attempt,
+              max_attempts,
+              context.last_delay_ms,
+              retry_after_ms,
+              true
+            ),
+          circuit: circuit,
+          rate_limits: extract_rate_limit_headers(response, resilience),
+          response_body: Map.get(response, :body)
+        }
+
+        {:error, {:linear_api_status, status, metadata}}
+
+      true ->
+        :ok = clear_circuit_failures(resilience)
+        {:error, {:linear_api_status_response, status, response}}
+    end
+  end
+
+  defp handle_graphql_response(_status, response, _context) do
+    {:error, {:linear_api_request, {:invalid_linear_response, response}}}
+  end
+
+  defp retry_graphql_request(context, delay_ms) do
+    do_perform_graphql_with_retries(
+      context.payload,
+      context.headers,
+      context.request_fun,
+      context.resilience,
+      context.attempt + 1,
+      context.max_attempts,
+      delay_ms
+    )
+  end
+
+  defp handle_graphql_request_error(
+         reason,
+         payload,
+         headers,
+         request_fun,
+         resilience,
+         attempt,
+         max_attempts,
+         last_delay_ms
+       ) do
+    cond do
+      transient_request_error?(reason) and attempt < max_attempts ->
+        delay_ms = retry_delay_ms(attempt, nil, resilience)
+        log_transient_request_retry(reason, attempt, max_attempts, delay_ms)
+        resilience.sleep_fun.(delay_ms)
+
+        do_perform_graphql_with_retries(
+          payload,
+          headers,
+          request_fun,
+          resilience,
+          attempt + 1,
+          max_attempts,
+          delay_ms
+        )
+
+      transient_request_error?(reason) ->
+        circuit = record_circuit_failure(resilience)
+
+        metadata = %{
+          retry: retry_metadata(attempt, max_attempts, last_delay_ms, nil, true),
+          circuit: circuit
+        }
+
+        {:error, {:linear_api_request, reason, metadata}}
+
+      true ->
+        {:error, {:linear_api_request, reason}}
+    end
+  end
+
+  defp retry_metadata(attempt, max_attempts, last_delay_ms, retry_after_ms, exhausted?) do
+    %{
+      attempt: attempt,
+      max_attempts: max_attempts,
+      retries: max(attempt - 1, 0),
+      exhausted: exhausted?,
+      last_delay_ms: last_delay_ms,
+      retry_after_ms: retry_after_ms
+    }
+    |> compact_map()
+  end
+
+  defp log_transient_status_retry(status, attempt, max_attempts, delay_ms, retry_after_ms) do
+    Logger.warning(
+      "Linear GraphQL transient status; scheduling retry" <>
+        resilience_log_context(%{
+          retry: retry_metadata(attempt + 1, max_attempts, delay_ms, retry_after_ms, false),
+          status: status
+        })
+    )
+  end
+
+  defp log_transient_request_retry(reason, attempt, max_attempts, delay_ms) do
+    Logger.warning(
+      "Linear GraphQL transport failure; scheduling retry" <>
+        resilience_log_context(%{
+          retry: retry_metadata(attempt + 1, max_attempts, delay_ms, nil, false),
+          request_reason: inspect(reason)
+        })
+    )
+  end
+
+  defp log_status_failure(payload, status, metadata) do
+    response = %{status: status, body: Map.get(metadata, :response_body)}
+
+    Logger.error(
+      "Linear GraphQL request failed status=#{status}" <>
+        linear_error_context(payload, response) <>
+        resilience_log_context(metadata)
+    )
+  end
+
+  defp log_request_failure(reason, metadata) do
+    Logger.error("Linear GraphQL request failed: #{inspect(reason)}" <> resilience_log_context(metadata))
+  end
+
+  defp retry_delay_ms(attempt, retry_after_ms, resilience) do
+    exponential_delay_ms =
+      resilience.retry_base_delay_ms
+      |> Kernel.*(Integer.pow(2, max(attempt - 1, 0)))
+      |> min(resilience.retry_max_delay_ms)
+
+    case retry_after_ms do
+      value when is_integer(value) and value >= 0 -> max(value, exponential_delay_ms)
+      _ -> exponential_delay_ms
+    end
+  end
+
+  defp maybe_apply_proactive_rate_limit_backoff(response, resilience) do
+    rate_limits = extract_rate_limit_headers(response, resilience)
+    delay_ms = proactive_rate_limit_delay_ms(rate_limits, resilience)
+
+    if delay_ms > 0 do
+      metadata = %{rate_limits: Map.put(rate_limits, :proactive_delay_ms, delay_ms)}
+
+      Logger.warning("Linear GraphQL proactive rate-limit backoff engaged" <> resilience_log_context(metadata))
+
+      resilience.sleep_fun.(delay_ms)
+    end
+
+    :ok
+  end
+
+  defp proactive_rate_limit_delay_ms(rate_limits, resilience) when is_map(rate_limits) do
+    if low_rate_limit_budget?(rate_limits, resilience.rate_limit_low_remaining) do
+      delay_ms =
+        [Map.get(rate_limits, :requests_reset_ms), Map.get(rate_limits, :complexity_reset_ms)]
+        |> Enum.filter(&(is_integer(&1) and &1 > 0))
+        |> case do
+          [] -> resilience.rate_limit_backoff_ms
+          values -> min(Enum.max(values), resilience.rate_limit_backoff_ms)
+        end
+
+      min(delay_ms, resilience.rate_limit_backoff_cap_ms)
+    else
+      0
+    end
+  end
+
+  defp proactive_rate_limit_delay_ms(_rate_limits, _resilience), do: 0
+
+  defp low_rate_limit_budget?(rate_limits, threshold) do
+    requests_remaining = Map.get(rate_limits, :requests_remaining)
+    complexity_remaining = Map.get(rate_limits, :complexity_remaining)
+
+    (is_integer(requests_remaining) and requests_remaining <= threshold) or
+      (is_integer(complexity_remaining) and complexity_remaining <= threshold)
+  end
+
+  defp extract_rate_limit_headers(response, resilience) do
+    headers = Map.get(response, :headers, %{})
+
+    %{
+      requests_remaining: parse_integer_header(headers, "x-ratelimit-requests-remaining"),
+      complexity_remaining: parse_integer_header(headers, "x-ratelimit-complexity-remaining"),
+      requests_reset_ms: parse_reset_header_ms(headers, "x-ratelimit-requests-reset", resilience),
+      complexity_reset_ms: parse_reset_header_ms(headers, "x-ratelimit-complexity-reset", resilience)
+    }
+    |> compact_map()
+  end
+
+  defp extract_retry_after_ms(response, resilience) do
+    headers = Map.get(response, :headers, %{})
+    parse_retry_after_ms(first_header_value(headers, "retry-after"), resilience)
+  end
+
+  defp parse_integer_header(headers, header_name) do
+    headers
+    |> first_header_value(header_name)
+    |> parse_integer_value()
+  end
+
+  defp parse_reset_header_ms(headers, header_name, resilience) do
+    case first_header_value(headers, header_name) |> parse_integer_value() do
+      nil ->
+        nil
+
+      value when value <= 0 ->
+        0
+
+      value when value >= 1_000_000_000 ->
+        now_ms =
+          resilience.wall_clock_fun.()
+          |> DateTime.to_unix(:millisecond)
+
+        max(value * 1_000 - now_ms, 0)
+
+      value ->
+        value * 1_000
+    end
+  end
+
+  defp parse_retry_after_ms(nil, _resilience), do: nil
+
+  defp parse_retry_after_ms(value, resilience) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    case parse_integer_value(trimmed) do
+      seconds when is_integer(seconds) and seconds >= 0 ->
+        seconds * 1_000
+
+      _ ->
+        parse_retry_after_http_date_ms(trimmed, resilience)
+    end
+  end
+
+  defp parse_retry_after_ms(_value, _resilience), do: nil
+
+  defp parse_retry_after_http_date_ms(value, resilience) when is_binary(value) do
+    with [_, day_raw, month_name, year_raw, hour_raw, minute_raw, second_raw] <-
+           Regex.run(@http_retry_after_regex, value),
+         day when is_integer(day) <- parse_integer_value(day_raw),
+         year when is_integer(year) <- parse_integer_value(year_raw),
+         hour when is_integer(hour) <- parse_integer_value(hour_raw),
+         minute when is_integer(minute) <- parse_integer_value(minute_raw),
+         second when is_integer(second) <- parse_integer_value(second_raw),
+         month when is_integer(month) <- Map.get(@http_retry_after_months, month_name),
+         {:ok, date} <- Date.new(year, month, day),
+         {:ok, time} <- Time.new(hour, minute, second),
+         {:ok, datetime} <- DateTime.new(date, time, "Etc/UTC") do
+      now_ms =
+        resilience.wall_clock_fun.()
+        |> DateTime.to_unix(:millisecond)
+
+      max(DateTime.to_unix(datetime, :millisecond) - now_ms, 0)
+    else
+      _ -> nil
+    end
+  end
+
+  defp parse_integer_value(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, ""} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp parse_integer_value(_value), do: nil
+
+  defp normalize_response(%{} = response) do
+    %{
+      status: parse_status(Map.get(response, :status) || Map.get(response, "status")),
+      body: Map.get(response, :body) || Map.get(response, "body"),
+      headers: normalize_headers(Map.get(response, :headers) || Map.get(response, "headers") || %{})
+    }
+  end
+
+  defp parse_status(status) when is_integer(status), do: status
+  defp parse_status(_status), do: nil
+
+  defp normalize_headers(headers) when is_map(headers) do
+    Enum.reduce(headers, %{}, fn {key, value}, acc ->
+      put_header_values(acc, key, value)
+    end)
+  end
+
+  defp normalize_headers(headers) when is_list(headers) do
+    Enum.reduce(headers, %{}, fn
+      {key, value}, acc -> put_header_values(acc, key, value)
+      _, acc -> acc
+    end)
+  end
+
+  defp normalize_headers(_headers), do: %{}
+
+  defp put_header_values(acc, key, values) do
+    normalized_key =
+      key
+      |> to_string()
+      |> String.downcase()
+
+    normalized_values =
+      case values do
+        value when is_binary(value) -> [value]
+        value when is_list(value) -> Enum.map(value, &to_string/1)
+        value -> [to_string(value)]
+      end
+
+    Map.put(acc, normalized_key, normalized_values)
+  end
+
+  defp first_header_value(headers, key) when is_map(headers) and is_binary(key) do
+    normalized_key = String.downcase(key)
+
+    case Map.get(headers, normalized_key) do
+      [value | _] -> value
+      value when is_binary(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp first_header_value(_headers, _key), do: nil
+
+  defp transient_status?(status) when is_integer(status) do
+    status == 429 or (status >= 500 and status <= 599)
+  end
+
+  defp transient_request_error?(%{reason: reason}), do: transient_request_error?(reason)
+  defp transient_request_error?({reason, _}) when is_atom(reason), do: MapSet.member?(@transient_request_reasons, reason)
+  defp transient_request_error?({:tls_alert, _}), do: true
+  defp transient_request_error?(reason) when is_atom(reason), do: MapSet.member?(@transient_request_reasons, reason)
+  defp transient_request_error?(_reason), do: false
+
+  defp clear_circuit_failures(resilience) do
+    state = read_circuit_state(resilience)
+
+    if Map.get(state, :consecutive_failures, 0) > 0 or is_integer(Map.get(state, :open_until_ms)) do
+      write_circuit_state(resilience, default_circuit_state())
+    end
+
+    :ok
+  end
+
+  defp record_circuit_failure(resilience) do
+    state = read_circuit_state(resilience)
+    now_ms = resilience.monotonic_time_fun.()
+    failures = Map.get(state, :consecutive_failures, 0) + 1
+    threshold = resilience.circuit_failure_threshold
+    should_open? = failures >= threshold
+    open_until_ms = if should_open?, do: now_ms + resilience.circuit_cooldown_ms, else: nil
+
+    next_state = %{consecutive_failures: failures, open_until_ms: open_until_ms}
+    write_circuit_state(resilience, next_state)
+
+    metadata = circuit_metadata(next_state, resilience, now_ms, if(should_open?, do: :open, else: :closed))
+
+    if should_open? do
+      Logger.error("Linear GraphQL circuit breaker tripped" <> resilience_log_context(%{circuit: metadata}))
+    end
+
+    metadata
+  end
+
+  defp circuit_metadata(state, resilience, now_ms, state_name) do
+    open_until_ms = Map.get(state, :open_until_ms)
+
+    %{
+      state: state_name,
+      consecutive_failures: Map.get(state, :consecutive_failures, 0),
+      failure_threshold: resilience.circuit_failure_threshold,
+      cooldown_ms: resilience.circuit_cooldown_ms,
+      open_until_ms: open_until_ms,
+      open_remaining_ms: if(is_integer(open_until_ms), do: max(open_until_ms - now_ms, 0), else: 0)
+    }
+    |> compact_map()
+  end
+
+  defp read_circuit_state(resilience) do
+    ensure_circuit_table()
+
+    case :ets.lookup(@circuit_table, resilience.circuit_key) do
+      [{_key, state}] when is_map(state) ->
+        Map.merge(default_circuit_state(), state)
+
+      _ ->
+        default_circuit_state()
+    end
+  end
+
+  defp write_circuit_state(resilience, state) do
+    ensure_circuit_table()
+    true = :ets.insert(@circuit_table, {resilience.circuit_key, state})
+    :ok
+  end
+
+  defp ensure_circuit_table do
+    case :ets.whereis(@circuit_table) do
+      :undefined ->
+        try do
+          :ets.new(@circuit_table, [:named_table, :public, :set, read_concurrency: true, write_concurrency: true])
+        rescue
+          ArgumentError -> @circuit_table
+        end
+
+      _table ->
+        @circuit_table
+    end
+
+    :ok
+  end
+
+  defp default_circuit_state do
+    %{consecutive_failures: 0, open_until_ms: nil}
+  end
+
+  defp compact_map(map) when is_map(map) do
+    Enum.reduce(map, %{}, fn
+      {_key, nil}, acc -> acc
+      {key, value}, acc -> Map.put(acc, key, value)
+    end)
+  end
+
+  defp resilience_log_context(metadata) when map_size(metadata) == 0, do: ""
+
+  defp resilience_log_context(metadata) when is_map(metadata) do
+    " metadata=" <> inspect(metadata, limit: 20, printable_limit: @max_error_body_log_bytes)
   end
 
   defp decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
