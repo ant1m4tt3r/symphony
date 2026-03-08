@@ -4,19 +4,17 @@ defmodule SymphonyElixir.AgentRunner do
   """
 
   require Logger
-  alias SymphonyElixir.AgentRuntime
-  alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRuntime, Config, Linear.Issue, PromptBuilder, Runtime, Tracker, Workspace}
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
-  def run(issue, codex_update_recipient \\ nil, opts \\ []) do
+  def run(issue, update_recipient \\ nil, opts \\ []) do
     Logger.info("Starting agent run for #{issue_context(issue)}")
 
     case Workspace.create_for_issue(issue) do
       {:ok, workspace} ->
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue),
-               :ok <- run_codex_turns(workspace, issue, codex_update_recipient, opts) do
+               :ok <- run_agent_turns(workspace, issue, update_recipient, opts) do
             :ok
           else
             {:error, reason} ->
@@ -33,44 +31,44 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp codex_message_handler(recipient, issue) do
+  defp runtime_message_handler(recipient, issue) do
     fn message ->
-      send_codex_update(recipient, issue, message)
+      send_runtime_update(recipient, issue, message)
     end
   end
 
-  defp send_codex_update(recipient, %Issue{id: issue_id}, message)
+  defp send_runtime_update(recipient, %Issue{id: issue_id}, message)
        when is_binary(issue_id) and is_pid(recipient) do
     send(recipient, {:codex_worker_update, issue_id, message})
     :ok
   end
 
-  defp send_codex_update(_recipient, _issue, _message), do: :ok
+  defp send_runtime_update(_recipient, _issue, _message), do: :ok
 
-  defp run_codex_turns(workspace, issue, codex_update_recipient, opts) do
+  defp run_agent_turns(workspace, issue, update_recipient, opts) do
     max_turns = Keyword.get(opts, :max_turns, Config.agent_max_turns())
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
     with {:ok, runtime_selection} <- AgentRuntime.resolve(issue),
-         :ok <- emit_runtime_selection(codex_update_recipient, issue, runtime_selection),
-         {:ok, session} <- AppServer.start_session(workspace, runtime_selection) do
+         :ok <- emit_runtime_selection(update_recipient, issue, runtime_selection),
+         {:ok, session} <- Runtime.start_session(workspace, runtime_selection) do
       try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
+        do_run_agent_turns(session, workspace, issue, update_recipient, opts, issue_state_fetcher, 1, max_turns)
       after
-        AppServer.stop_session(session)
+        Runtime.stop_session(session)
       end
     end
   end
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
+  defp do_run_agent_turns(app_session, workspace, issue, update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
     with {:ok, turn_session} <-
-           AppServer.run_turn(
+           Runtime.run_turn(
              app_session,
              prompt,
              issue,
-             on_message: codex_message_handler(codex_update_recipient, issue)
+             on_message: runtime_message_handler(update_recipient, issue)
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
@@ -78,11 +76,11 @@ defmodule SymphonyElixir.AgentRunner do
         {:continue, refreshed_issue} when turn_number < max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
-          do_run_codex_turns(
+          do_run_agent_turns(
             app_session,
             workspace,
             refreshed_issue,
-            codex_update_recipient,
+            update_recipient,
             opts,
             issue_state_fetcher,
             turn_number + 1,
@@ -109,7 +107,7 @@ defmodule SymphonyElixir.AgentRunner do
     """
     Continuation guidance:
 
-    - The previous Codex turn completed normally, but the Linear issue is still in an active state.
+    - The previous turn completed normally, but the Linear issue is still in an active state.
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
     - Resume from the current workspace and workpad state instead of restarting from scratch.
     - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
@@ -156,7 +154,7 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp emit_runtime_selection(recipient, issue, selection) when is_map(selection) do
-    send_codex_update(recipient, issue, %{
+    send_runtime_update(recipient, issue, %{
       event: :runtime_selected,
       timestamp: DateTime.utc_now(),
       requested_runtime: selection.requested_runtime,

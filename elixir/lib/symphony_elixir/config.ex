@@ -325,6 +325,47 @@ defmodule SymphonyElixir.Config do
 
   def command_for_runtime(_runtime), do: codex_command()
 
+  @type runtime_config :: %{
+          command: String.t(),
+          turn_timeout_ms: pos_integer(),
+          read_timeout_ms: pos_integer(),
+          stall_timeout_ms: non_neg_integer(),
+          allow_unsafe_merge_push: boolean()
+        }
+
+  @spec runtime_config(String.t()) :: runtime_config()
+  def runtime_config(runtime_name) when is_binary(runtime_name) do
+    case normalize_runtime_name(runtime_name) do
+      "claude" ->
+        %{
+          command: claude_command(),
+          turn_timeout_ms: codex_turn_timeout_ms(),
+          read_timeout_ms: codex_read_timeout_ms(),
+          stall_timeout_ms: codex_stall_timeout_ms(),
+          allow_unsafe_merge_push: codex_allow_unsafe_merge_push?()
+        }
+
+      _ ->
+        %{
+          command: codex_command(),
+          turn_timeout_ms: codex_turn_timeout_ms(),
+          read_timeout_ms: codex_read_timeout_ms(),
+          stall_timeout_ms: codex_stall_timeout_ms(),
+          allow_unsafe_merge_push: codex_allow_unsafe_merge_push?()
+        }
+    end
+  end
+
+  def runtime_config(_runtime_name) do
+    %{
+      command: codex_command(),
+      turn_timeout_ms: codex_turn_timeout_ms(),
+      read_timeout_ms: codex_read_timeout_ms(),
+      stall_timeout_ms: codex_stall_timeout_ms(),
+      allow_unsafe_merge_push: codex_allow_unsafe_merge_push?()
+    }
+  end
+
   @spec codex_turn_timeout_ms() :: pos_integer()
   def codex_turn_timeout_ms do
     get_in(validated_workflow_options(), [:codex, :turn_timeout_ms])

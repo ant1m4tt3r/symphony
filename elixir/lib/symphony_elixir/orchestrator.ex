@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Orchestrator do
   @moduledoc """
-  Polls Linear and dispatches repository copies to Codex-backed workers.
+  Polls Linear and dispatches repository copies to runtime-backed agent workers.
   """
 
   use GenServer
@@ -656,7 +656,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp do_dispatch_issue(%State{} = state, issue, attempt) do
     recipient = self()
-    runtime_defaults = runtime_metadata_from_command(Config.codex_command())
+    runtime_defaults = runtime_metadata_from_command(Config.command_for_runtime(Config.agent_runtime()))
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
            AgentRunner.run(issue, recipient, attempt: attempt)
@@ -1119,6 +1119,14 @@ defmodule SymphonyElixir.Orchestrator do
       token_delta
     }
   end
+
+  defp codex_app_server_pid_for_update(_existing, %{runtime_server_pid: pid})
+       when is_binary(pid),
+       do: pid
+
+  defp codex_app_server_pid_for_update(_existing, %{runtime_server_pid: pid})
+       when is_integer(pid),
+       do: Integer.to_string(pid)
 
   defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid})
        when is_binary(pid),
