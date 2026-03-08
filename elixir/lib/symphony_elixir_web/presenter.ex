@@ -109,7 +109,19 @@ defmodule SymphonyElixirWeb.Presenter do
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
         total_tokens: entry.codex_total_tokens
-      }
+      },
+      pr_status: pr_status_payload(Map.get(entry, :pr_status))
+    }
+  end
+
+  defp pr_status_payload(nil), do: nil
+
+  defp pr_status_payload(pr_status) when is_map(pr_status) do
+    %{
+      pr_url: Map.get(pr_status, :pr_url),
+      pr_number: Map.get(pr_status, :pr_number),
+      checks: Map.get(pr_status, :checks),
+      review_status: Map.get(pr_status, :review_status)
     }
   end
 

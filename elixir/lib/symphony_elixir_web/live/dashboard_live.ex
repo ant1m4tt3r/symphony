@@ -133,6 +133,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 <colgroup>
                   <col style="width: 12rem;" />
                   <col style="width: 8rem;" />
+                  <col style="width: 10rem;" />
                   <col style="width: 7.5rem;" />
                   <col style="width: 8.5rem;" />
                   <col />
@@ -142,6 +143,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   <tr>
                     <th>Issue</th>
                     <th>State</th>
+                    <th>PR / Checks</th>
                     <th>Session</th>
                     <th>Runtime / turns</th>
                     <th>Codex update</th>
@@ -160,6 +162,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <span class={state_badge_class(entry.state)}>
                         <%= entry.state %>
                       </span>
+                    </td>
+                    <td>
+                      <.pr_status_cell pr_status={entry.pr_status} />
                     </td>
                     <td>
                       <div class="session-stack">
@@ -249,6 +254,50 @@ defmodule SymphonyElixirWeb.DashboardLive do
     """
   end
 
+  @doc false
+  attr(:pr_status, :map, default: nil)
+
+  def pr_status_cell(assigns) do
+    ~H"""
+    <%= if @pr_status do %>
+      <div class="pr-status-stack">
+        <a
+          href={@pr_status.pr_url}
+          class="pr-link"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          PR #<%= @pr_status.pr_number %>
+        </a>
+        <div class="pr-badges">
+          <%= if @pr_status.checks do %>
+            <span
+              class={ci_badge_class(@pr_status.checks)}
+              role="status"
+              aria-label={"CI checks: #{@pr_status.checks}"}
+              tabindex="0"
+            >
+              <%= ci_badge_label(@pr_status.checks) %>
+            </span>
+          <% end %>
+          <%= if @pr_status.review_status do %>
+            <span
+              class={review_badge_class(@pr_status.review_status)}
+              role="status"
+              aria-label={"Review: #{humanize_review_status(@pr_status.review_status)}"}
+              tabindex="0"
+            >
+              <%= humanize_review_status(@pr_status.review_status) %>
+            </span>
+          <% end %>
+        </div>
+      </div>
+    <% else %>
+      <span class="muted">—</span>
+    <% end %>
+    """
+  end
+
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
   end
@@ -323,6 +372,43 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
+  end
+
+  defp ci_badge_class(status) do
+    base = "ci-badge"
+
+    case to_string(status) do
+      s when s in ["passing", "success"] -> "#{base} ci-badge-passing"
+      s when s in ["failing", "failure", "error"] -> "#{base} ci-badge-failing"
+      _ -> "#{base} ci-badge-pending"
+    end
+  end
+
+  defp ci_badge_label(status) do
+    case to_string(status) do
+      s when s in ["passing", "success"] -> "CI passing"
+      s when s in ["failing", "failure", "error"] -> "CI failing"
+      _ -> "CI pending"
+    end
+  end
+
+  defp review_badge_class(status) do
+    base = "review-badge"
+
+    case to_string(status) do
+      "approved" -> "#{base} review-badge-approved"
+      "changes_requested" -> "#{base} review-badge-changes"
+      _ -> "#{base} review-badge-pending"
+    end
+  end
+
+  defp humanize_review_status(status) do
+    case to_string(status) do
+      "approved" -> "Approved"
+      "changes_requested" -> "Changes requested"
+      "pending" -> "Review pending"
+      other -> other
+    end
   end
 
   defp pretty_value(nil), do: "n/a"

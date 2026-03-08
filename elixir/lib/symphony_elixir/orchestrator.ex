@@ -625,7 +625,8 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_total_tokens: 0,
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
-            started_at: DateTime.utc_now()
+            started_at: DateTime.utc_now(),
+            pr_status: nil
           })
 
         %{
@@ -896,6 +897,18 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @spec update_pr_status(String.t(), map()) :: :ok | :not_found
+  def update_pr_status(issue_id, pr_status), do: update_pr_status(__MODULE__, issue_id, pr_status)
+
+  @spec update_pr_status(GenServer.server(), String.t(), map()) :: :ok | :not_found
+  def update_pr_status(server, issue_id, pr_status) do
+    if Process.whereis(server) do
+      GenServer.call(server, {:update_pr_status, issue_id, pr_status})
+    else
+      :not_found
+    end
+  end
+
   @spec snapshot() :: map() | :timeout | :unavailable
   def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -936,7 +949,8 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: metadata.last_codex_timestamp,
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
-          runtime_seconds: running_seconds(metadata.started_at, now)
+          runtime_seconds: running_seconds(metadata.started_at, now),
+          pr_status: Map.get(metadata, :pr_status)
         }
       end)
 
@@ -964,6 +978,17 @@ defmodule SymphonyElixir.Orchestrator do
          poll_interval_ms: state.poll_interval_ms
        }
      }, state}
+  end
+
+  def handle_call({:update_pr_status, issue_id, pr_status}, _from, state) do
+    case Map.fetch(state.running, issue_id) do
+      {:ok, metadata} ->
+        updated = %{state | running: Map.put(state.running, issue_id, %{metadata | pr_status: pr_status})}
+        {:reply, :ok, updated}
+
+      :error ->
+        {:reply, :not_found, state}
+    end
   end
 
   def handle_call(:request_refresh, _from, state) do
