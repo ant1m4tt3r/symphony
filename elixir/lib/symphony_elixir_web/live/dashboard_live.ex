@@ -9,11 +9,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
   @runtime_tick_ms 1_000
 
   @impl true
-  def mount(_params, _session, socket) do
+
+  def mount(params, _session, socket) do
     socket =
       socket
       |> assign(:payload, load_payload())
       |> assign(:now, DateTime.utc_now())
+      |> assign_filters_from_params(params)
 
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
@@ -24,12 +26,32 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   @impl true
+
+  def handle_params(params, _uri, socket) do
+    socket = assign_filters_from_params(socket, params)
+    {:noreply, socket}
+  end
+
+  defp assign_filters_from_params(socket, params) do
+    state_filter = Map.get(params, "state", "")
+    priority_sort = Map.get(params, "sort", "")
+    assignee_filter = Map.get(params, "assignee", "")
+
+    socket
+    |> assign(:state_filter, state_filter)
+    |> assign(:priority_sort, priority_sort)
+    |> assign(:assignee_filter, assignee_filter)
+  end
+
+  @impl true
+
   def handle_info(:runtime_tick, socket) do
     schedule_runtime_tick()
     {:noreply, assign(socket, :now, DateTime.utc_now())}
   end
 
   @impl true
+
   def handle_info(:observability_updated, socket) do
     {:noreply,
      socket
@@ -39,6 +61,27 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def render(assigns) do
+    filtered_running =
+      filter_and_sort_running(
+        assigns.payload.running,
+        assigns.state_filter,
+        assigns.priority_sort,
+        assigns.assignee_filter
+      )
+
+    filtered_retrying =
+      filter_and_sort_retrying(
+        assigns.payload.retrying,
+        assigns.state_filter,
+        assigns.priority_sort,
+        assigns.assignee_filter
+      )
+
+    assigns =
+      assigns
+      |> assign(:filtered_running, filtered_running)
+      |> assign(:filtered_retrying, filtered_retrying)
+
     ~H"""
     <section class="dashboard-shell">
       <header class="hero-card">
@@ -68,40 +111,40 @@ defmodule SymphonyElixirWeb.DashboardLive do
         </div>
       </header>
 
-      <%= if @payload[:error] do %>
+      <%= if assigns.payload[:error] do %>
         <section class="error-card">
           <h2 class="error-title">
             Snapshot unavailable
           </h2>
           <p class="error-copy">
-            <strong><%= @payload.error.code %>:</strong> <%= @payload.error.message %>
+            <strong><%= assigns.payload.error.code %>:</strong> <%= assigns.payload.error.message %>
           </p>
         </section>
       <% else %>
         <section class="metric-grid">
           <article class="metric-card">
             <p class="metric-label">Running</p>
-            <p class="metric-value numeric"><%= @payload.counts.running %></p>
+            <p class="metric-value numeric"><%= assigns.payload.counts.running %></p>
             <p class="metric-detail">Active issue sessions in the current runtime.</p>
           </article>
 
           <article class="metric-card">
             <p class="metric-label">Retrying</p>
-            <p class="metric-value numeric"><%= @payload.counts.retrying %></p>
+            <p class="metric-value numeric"><%= assigns.payload.counts.retrying %></p>
             <p class="metric-detail">Issues waiting for the next retry window.</p>
           </article>
 
           <article class="metric-card">
             <p class="metric-label">Total tokens</p>
-            <p class="metric-value numeric"><%= format_int(@payload.codex_totals.total_tokens) %></p>
+            <p class="metric-value numeric"><%= format_int(assigns.payload.codex_totals.total_tokens) %></p>
             <p class="metric-detail numeric">
-              In <%= format_int(@payload.codex_totals.input_tokens) %> / Out <%= format_int(@payload.codex_totals.output_tokens) %>
+              In <%= format_int(assigns.payload.codex_totals.input_tokens) %> / Out <%= format_int(assigns.payload.codex_totals.output_tokens) %>
             </p>
           </article>
 
           <article class="metric-card">
             <p class="metric-label">Runtime</p>
-            <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
+            <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(assigns.payload, assigns.now)) %></p>
             <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
           </article>
         </section>
@@ -114,7 +157,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </div>
           </div>
 
-          <pre class="code-panel"><%= pretty_value(@payload.rate_limits) %></pre>
+          <pre class="code-panel"><%= pretty_value(assigns.payload.rate_limits) %></pre>
         </section>
 
         <section class="section-card">
@@ -123,10 +166,31 @@ defmodule SymphonyElixirWeb.DashboardLive do
               <h2 class="section-title">Running sessions</h2>
               <p class="section-copy">Active issues, last known agent activity, and token usage.</p>
             </div>
+            <div class="filter-controls">
+              <select name="state" class="filter-select" phx-change="filter_changed">
+                <option value="">All States</option>
+                <option value="In Progress" selected={assigns.state_filter == "In Progress"}>In Progress</option>
+                <option value="Todo" selected={assigns.state_filter == "Todo"}>Todo</option>
+                <option value="In Review" selected={assigns.state_filter == "In Review"}>In Review</option>
+              </select>
+              <select name="sort" class="filter-select" phx-change="filter_changed">
+                <option value="">Default Sort</option>
+                <option value="priority" selected={assigns.priority_sort == "priority"}>Priority</option>
+                <option value="priority_desc" selected={assigns.priority_sort == "priority_desc"}>Priority (High First)</option>
+              </select>
+              <input
+                type="text"
+                name="assignee"
+                class="filter-input"
+                placeholder="Filter by assignee..."
+                value={assigns.assignee_filter}
+                phx-change="filter_changed"
+              />
+            </div>
           </div>
 
-          <%= if @payload.running == [] do %>
-            <p class="empty-state">No active sessions.</p>
+          <%= if assigns.filtered_running == [] do %>
+            <p class="empty-state">No active sessions<%= if assigns.state_filter != "" or assigns.assignee_filter != "", do: " match the current filters" %>.</p>
           <% else %>
             <div class="table-wrap">
               <table class="data-table data-table-running">
@@ -149,7 +213,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   </tr>
                 </thead>
                 <tbody>
-                  <tr :for={entry <- @payload.running}>
+                  <tr :for={entry <- assigns.filtered_running}>
                     <td>
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
@@ -178,7 +242,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                         <% end %>
                       </div>
                     </td>
-                    <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, @now) %></td>
+                    <td class="numeric"><%= format_runtime_and_turns(entry.started_at, entry.turn_count, assigns.now) %></td>
                     <td>
                       <div class="detail-stack">
                         <span
@@ -214,8 +278,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </div>
           </div>
 
-          <%= if @payload.retrying == [] do %>
-            <p class="empty-state">No issues are currently backing off.</p>
+          <%= if assigns.filtered_retrying == [] do %>
+            <p class="empty-state">No issues are currently backing off<%= if assigns.state_filter != "" or assigns.assignee_filter != "", do: " matching the current filters" %>.</p>
           <% else %>
             <div class="table-wrap">
               <table class="data-table" style="min-width: 680px;">
@@ -228,7 +292,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   </tr>
                 </thead>
                 <tbody>
-                  <tr :for={entry <- @payload.retrying}>
+                  <tr :for={entry <- assigns.filtered_retrying}>
                     <td>
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
@@ -248,6 +312,96 @@ defmodule SymphonyElixirWeb.DashboardLive do
     </section>
     """
   end
+
+  @impl true
+
+  def handle_event(
+        "filter_changed",
+        %{"state" => state, "sort" => sort, "assignee" => assignee},
+        socket
+      ) do
+    params =
+      Enum.reject(
+        [
+          {"state", state},
+          {"sort", sort},
+          {"assignee", assignee}
+        ],
+        fn {_k, v} -> v == "" end
+      )
+      |> Map.new()
+
+    {:noreply, patch_filter_params(socket, params)}
+  end
+
+  def handle_event("filter_changed", params, socket) do
+    state = Map.get(params, "state", "")
+    sort = Map.get(params, "sort", "")
+    assignee = Map.get(params, "assignee", "")
+
+    params =
+      Enum.reject(
+        [
+          {"state", state},
+          {"sort", sort},
+          {"assignee", assignee}
+        ],
+        fn {_k, v} -> v == "" end
+      )
+      |> Map.new()
+
+    {:noreply, patch_filter_params(socket, params)}
+  end
+
+  defp patch_filter_params(socket, params) do
+    socket
+    |> assign(:state_filter, Map.get(params, "state", ""))
+    |> assign(:priority_sort, Map.get(params, "sort", ""))
+    |> assign(:assignee_filter, Map.get(params, "assignee", ""))
+    |> push_patch(to: "?#{URI.encode_query(params)}")
+  end
+
+  defp filter_and_sort_running(entries, state_filter, priority_sort, assignee_filter) do
+    entries
+    |> Enum.filter(fn entry ->
+      matches_state_filter(entry, state_filter) and
+        matches_assignee_filter(entry, assignee_filter)
+    end)
+    |> Enum.sort_by(&sort_key(&1, priority_sort))
+  end
+
+  defp filter_and_sort_retrying(entries, state_filter, _priority_sort, assignee_filter) do
+    entries
+    |> Enum.filter(fn entry ->
+      matches_state_filter(entry, state_filter) and
+        matches_assignee_filter(entry, assignee_filter)
+    end)
+  end
+
+  defp matches_state_filter(_entry, ""), do: true
+
+  defp matches_state_filter(entry, state) do
+    entry.state == state
+  end
+
+  defp matches_assignee_filter(_entry, ""), do: true
+
+  defp matches_assignee_filter(entry, assignee) do
+    entry.assignee_id == assignee
+  end
+
+  defp sort_key(entry, "priority") do
+    {priority_sort_key(entry.priority), entry.issue_identifier || ""}
+  end
+
+  defp sort_key(entry, "priority_desc") do
+    {-priority_sort_key(entry.priority), entry.issue_identifier || ""}
+  end
+
+  defp sort_key(entry, _), do: {0, entry.issue_identifier || ""}
+
+  defp priority_sort_key(nil), do: 100
+  defp priority_sort_key(p) when is_integer(p), do: p
 
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
@@ -272,7 +426,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
       end)
   end
 
-  defp format_runtime_and_turns(started_at, turn_count, now) when is_integer(turn_count) and turn_count > 0 do
+  defp format_runtime_and_turns(started_at, turn_count, now)
+       when is_integer(turn_count) and turn_count > 0 do
     "#{format_runtime_seconds(runtime_seconds_from_started_at(started_at, now))} / #{turn_count}"
   end
 
@@ -290,7 +445,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
     DateTime.diff(now, started_at, :second)
   end
 
-  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now) when is_binary(started_at) do
+  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now)
+       when is_binary(started_at) do
     case DateTime.from_iso8601(started_at) do
       {:ok, parsed, _offset} -> runtime_seconds_from_started_at(parsed, now)
       _ -> 0
@@ -314,10 +470,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
     normalized = state |> to_string() |> String.downcase()
 
     cond do
-      String.contains?(normalized, ["progress", "running", "active"]) -> "#{base} state-badge-active"
-      String.contains?(normalized, ["blocked", "error", "failed"]) -> "#{base} state-badge-danger"
-      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
-      true -> base
+      String.contains?(normalized, ["progress", "running", "active"]) ->
+        "#{base} state-badge-active"
+
+      String.contains?(normalized, ["blocked", "error", "failed"]) ->
+        "#{base} state-badge-danger"
+
+      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) ->
+        "#{base} state-badge-warning"
+
+      true ->
+        base
     end
   end
 

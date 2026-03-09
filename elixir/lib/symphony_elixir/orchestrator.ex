@@ -110,6 +110,7 @@ defmodule SymphonyElixir.Orchestrator do
               |> complete_issue(issue_id)
               |> schedule_issue_retry(issue_id, 1, %{
                 identifier: running_entry.identifier,
+                issue: running_entry.issue,
                 delay_type: :continuation
               })
 
@@ -120,6 +121,7 @@ defmodule SymphonyElixir.Orchestrator do
 
               schedule_issue_retry(state, issue_id, next_attempt, %{
                 identifier: running_entry.identifier,
+                issue: running_entry.issue,
                 error: "agent exited: #{inspect(reason)}"
               })
           end
@@ -398,6 +400,7 @@ defmodule SymphonyElixir.Orchestrator do
       |> terminate_running_issue(issue_id, false)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
+        issue: running_entry.issue,
         error: "stalled for #{elapsed_ms}ms without codex activity"
       })
     else
@@ -576,12 +579,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_issue(%State{} = state, issue, attempt \\ nil) do
-    case revalidate_issue_for_dispatch(issue, &Tracker.fetch_issue_states_by_ids/1, terminal_state_set()) do
+    case revalidate_issue_for_dispatch(
+           issue,
+           &Tracker.fetch_issue_states_by_ids/1,
+           terminal_state_set()
+         ) do
       {:ok, %Issue{} = refreshed_issue} ->
         do_dispatch_issue(state, refreshed_issue, attempt)
 
       {:skip, :missing} ->
         Logger.info("Skipping dispatch; issue no longer active or visible: #{issue_context(issue)}")
+
         state
 
       {:skip, %Issue{} = refreshed_issue} ->
@@ -591,6 +599,7 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.warning("Skipping dispatch; issue refresh failed for #{issue_context(issue)}: #{inspect(reason)}")
+
         state
     end
   end
@@ -641,6 +650,7 @@ defmodule SymphonyElixir.Orchestrator do
 
         schedule_issue_retry(state, issue.id, next_attempt, %{
           identifier: issue.identifier,
+          issue: issue,
           error: "failed to spawn agent: #{inspect(reason)}"
         })
     end
@@ -808,6 +818,7 @@ defmodule SymphonyElixir.Orchestrator do
          attempt + 1,
          Map.merge(metadata, %{
            identifier: issue.identifier,
+           issue: issue,
            error: "no available orchestrator slots"
          })
        )}
@@ -818,7 +829,8 @@ defmodule SymphonyElixir.Orchestrator do
     %{state | claimed: MapSet.delete(state.claimed, issue_id)}
   end
 
-  defp retry_delay(attempt, metadata) when is_integer(attempt) and attempt > 0 and is_map(metadata) do
+  defp retry_delay(attempt, metadata)
+       when is_integer(attempt) and attempt > 0 and is_map(metadata) do
     if metadata[:delay_type] == :continuation and attempt == 1 do
       @continuation_retry_delay_ms
     else
@@ -926,6 +938,8 @@ defmodule SymphonyElixir.Orchestrator do
           issue_id: issue_id,
           identifier: metadata.identifier,
           state: metadata.issue.state,
+          priority: metadata.issue.priority,
+          assignee_id: metadata.issue.assignee_id,
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
@@ -942,12 +956,17 @@ defmodule SymphonyElixir.Orchestrator do
 
     retrying =
       state.retry_attempts
-      |> Enum.map(fn {issue_id, %{attempt: attempt, due_at_ms: due_at_ms} = retry} ->
+      |> Enum.map(fn {issue_id, retry} ->
+        issue = Map.get(retry, :issue)
+
         %{
           issue_id: issue_id,
-          attempt: attempt,
-          due_in_ms: max(0, due_at_ms - now_ms),
-          identifier: Map.get(retry, :identifier),
+          attempt: Map.get(retry, :attempt, 0),
+          due_in_ms: max(0, Map.get(retry, :due_at_ms, 0) - now_ms),
+          identifier: Map.get(retry, :identifier) || (is_map(issue) && issue.identifier),
+          state: is_map(issue) && issue.state,
+          priority: is_map(issue) && issue.priority,
+          assignee_id: is_map(issue) && issue.assignee_id,
           error: Map.get(retry, :error)
         }
       end)

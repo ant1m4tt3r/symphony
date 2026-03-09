@@ -24,15 +24,23 @@ defmodule SymphonyElixirWeb.Presenter do
         }
 
       :timeout ->
-        %{generated_at: generated_at, error: %{code: "snapshot_timeout", message: "Snapshot timed out"}}
+        %{
+          generated_at: generated_at,
+          error: %{code: "snapshot_timeout", message: "Snapshot timed out"}
+        }
 
       :unavailable ->
-        %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
+        %{
+          generated_at: generated_at,
+          error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}
+        }
     end
   end
 
-  @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}
-  def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) when is_binary(issue_identifier) do
+  @spec issue_payload(String.t(), GenServer.name(), timeout()) ::
+          {:ok, map()} | {:error, :issue_not_found}
+  def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms)
+      when is_binary(issue_identifier) do
     case Orchestrator.snapshot(orchestrator, snapshot_timeout_ms) do
       %{} = snapshot ->
         running = Enum.find(snapshot.running, &(&1.identifier == issue_identifier))
@@ -99,6 +107,8 @@ defmodule SymphonyElixirWeb.Presenter do
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
       state: entry.state,
+      priority: entry.priority,
+      assignee_id: entry.assignee_id,
       session_id: entry.session_id,
       turn_count: Map.get(entry, :turn_count, 0),
       last_event: entry.last_codex_event,
@@ -117,6 +127,9 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
+      state: entry.state,
+      priority: entry.priority,
+      assignee_id: entry.assignee_id,
       attempt: entry.attempt,
       due_at: due_at_iso8601(entry.due_in_ms),
       error: entry.error

@@ -280,6 +280,49 @@ pre,
   flex-wrap: wrap;
 }
 
+.filter-controls {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filter-select,
+.filter-input {
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.filter-select:hover,
+.filter-input:hover {
+  background: white;
+  border-color: var(--muted);
+}
+
+.filter-select:focus,
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.1);
+}
+
+.filter-input {
+  min-width: 160px;
+}
+
+.filter-select {
+  min-width: 120px;
+}
+
 .section-title {
   margin: 0;
   font-size: 1.08rem;
